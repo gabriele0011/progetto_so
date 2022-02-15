@@ -1,4 +1,4 @@
-#include <err_cleanup.h>
+#include "err_cleanup.h"
 
 //variabili globali
 int flag_D = 0;
@@ -10,7 +10,7 @@ char *socket_name = NULL; //controllo memoria
 
 
 ////////////////// ISNUMBER //////////////////
-long isNumber(const char* s) {
+long isNumber(const char* s){
 	char* e = NULL;
    	long val = strtol(s, &e, 0);
    	if (e != NULL && *e == (char)0) return val; 
@@ -19,8 +19,7 @@ long isNumber(const char* s) {
 
 
 ////////////////// CASE_H //////////////////
-static void case_h()
-{
+static void case_h(){
 	//apertura file
 	FILE *fp = fopen("help.txt", "r");
      	//controllo esito apertura
@@ -55,22 +54,32 @@ static int is_argument(int i, int dim, char* c){
 	else return 1;
 }
 
-////////////////// IS_ARGUMENT //////////////////
-void mystrtok_r (char* string)
-{
-	char* save = NULL;
 
-	char* token = strtok_r(string, ".", &save );
+////////////////// IS_ARGUMENT //////////////////
+void mystrtok_r (char* string){
+	//(!)problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
+	//si puo gestire direttamente da qui?
+	//rivaluta dopo l'implementazione dell'API
+
+	char* save = NULL;
+	char* token = strtok_r(string, ",", &save );
 	while (token){
 		printf("%s\n", token);
-		token = strtok_r(NULL, ".", &save);
+		token = strtok_r(NULL, ",", &save);
 	}
 }
 
+////////////////// MEM_ARG //////////////////	
+static void mem_arg(char** s, char* arg){
+
+	int len = strlen(arg);
+	ec_null( (*s = malloc(sizeof(char)*len)), "errore malloc");
+	strncpy(*s, arg, len);
+}
 
 //////////////////PARSER //////////////////
-static void parser(int dim, char** array)
-{
+static void parser(int dim, char** array){
+
 	//il parsing è suddiviso in due cicli (si scandisce argv del main)
 
 	//ciclo 1: si gestiscono i comandi di setting -h, -f, -t, -p, -d, -D
@@ -127,6 +136,8 @@ static void parser(int dim, char** array)
 				int len = strlen(array[i]);
 				ec_null( (arg_d = malloc(sizeof(char)*len)), "errore malloc");	//argomento arg_D = .../esempio/prova
 				strncpy(arg_d, array[i], len);
+			}else{
+				printf("errore: argomento -d mancante\n");
 			}
 		}
 	}
@@ -137,18 +148,34 @@ static void parser(int dim, char** array)
 
 	//ciclo 2: si gestiscono i comandi di richiesta al server -w, -W, -R, -r, -l, -u, -c
 	i = 0;
-	while( ++i < dim ){
+	while (++i < dim){
 		
-		//caso -w / effettua una richiesta di scrittura al server
-		if (is_opt(array[i], "-w") && (flag_d || flag_D)){		
-			printf("opzione -w riconosciuta\n");
+		//caso -w 
+		if (is_opt(array[i], "-w")){		
+			//verifica che siano attivi -d o -D altrimenti errore
+			if (!(flag_d || flag_D)){ printf("errore: -d / -D non attivi\n"); }
+			else{
+				//passo 1: verifica che sia presente un argomento obbligatorio
+				if (is_argument(i, dim, array[i])){
+					//memorizza argomento in s
+					char* s;
+					mem_arg(&s, array[++i]);
+					printf("arg di -w = s: %s\n", s);
+					
+					//passo 2: verifica se presente argomento opzionale
+					int n;
+					if ( !is_argument(i, dim, array[i]) ) n = 0;
+					else ec_meno1( (n = isNumber(array[++i])), "argomento errato");
+				}
+				//visita la directory ed invia eventuali richieste
+			}	//visit_dir(s, n);
 		}
 		
 		//caso -W
 		if (is_opt(array[i], "-W") && (flag_D || flag_d)){
-			//controllo se argomento è presente
-			if(is_argument(i, dim, array[i])){
-				
+			//cosa accade se i flag non sono attivi? da gestire in un altro if questo caso?
+			if (is_argument(i, dim, array[i])){
+				mystrtok_r(array[++i]);
 			}
 		}
 		/*
@@ -182,7 +209,6 @@ int main(int argc, char* argv[]){
 	//controllo su argc
 	if( argc == 1){
 		ERR_H(EINVAL, "errore su argomenti\n");
-		2
 	}
 	
 	//parser
