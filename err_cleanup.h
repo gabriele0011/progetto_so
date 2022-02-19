@@ -1,5 +1,3 @@
-/* file include e define che permettono la gestione degli errori e dei clean-up */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -7,7 +5,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <limits.h>
-
+#include <dirent.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -25,9 +23,11 @@
 //macro che permettono di controllare l'esito di funzioni ed chiamare proc. di cleanup
 #define ec_null(s, m) \
 	if(s == NULL){ perror(m); exit(EXIT_FAILURE); }
+
 //error clean up
 #define ec_meno1(s, m) \
 	if(s == -1){ perror(m); exit(EXIT_FAILURE); }
+
 //con procedura/funzione cleanup
 #define ec_meno1_c(s, m, c) \
 	if(s == -1){ perror(m); c; }

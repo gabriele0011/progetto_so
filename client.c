@@ -1,5 +1,6 @@
 #include "err_cleanup.h"
 
+
 //variabili globali
 int flag_D = 0;
 int flag_d = 0;
@@ -42,15 +43,13 @@ static void case_h(){
 
 ////////////////// IS_OPT //////////////////
 static int is_opt( char* arg, char* opt){
-	if(strcmp(arg, opt) == 0) return 1;
+	if(strcmp(arg, opt) == 0 && printf("opt %s riconosciuto\n", opt) ) return 1;
 	else return 0;
 }
 
-
 ////////////////// IS_ARGUMENT //////////////////
-static int is_argument(int i, int dim, char* c){
-	i++;
-	if (i >= dim || (c[i]+0 == '-')) return 0;
+static int is_argument(char* c){
+	if (c == NULL || (*c == '-') ) return 0;
 	else return 1;
 }
 
@@ -68,13 +67,38 @@ void mystrtok_r (char* string){
 		token = strtok_r(NULL, ",", &save);
 	}
 }
+////////////////// IS_REGULAR_FILE //////////////////
 
-////////////////// MEM_ARG //////////////////	
-static void mem_arg(char** s, char* arg){
+int is_regular_file(const char *path)
+{
+    struct stat path_stat;
+    stat(path, &path_stat);
+    return S_ISREG(path_stat.st_mode);
+}
 
-	int len = strlen(arg);
-	ec_null( (*s = malloc(sizeof(char)*len)), "errore malloc");
-	strncpy(*s, arg, len);
+
+////////////////// VISIT_AND_REQUEST //////////////////
+void visit_folder_and_request(char* dirname, int n)
+{
+	//passo 1: apertura directory dirname
+	DIR* d;
+	ec_null((d = opendir(dirname)), "errore su opendir");
+
+	//passo 2: lettura della directory
+	struct dirent* file;
+	while (errno == 0 && (file = readdir(d)) != NULL && n != 0){
+		printf("leggo %s\n", file->d_name);
+		//passo 3 caso 1: trovato un file -> aprilo e invia richiesta
+		if(is_regular_file(file->d_name)){
+			printf("richiesta di scrittura %s\n", file->d_name);
+			n--;
+		}else{
+			//passo 3 caso 2: trovata una directory ->visita ricorsiva
+			visit_folder_and_request(file->d_name, n);
+		}
+	}
+	//passo 4: chiudere la directory
+	ec_meno1(closedir(d), "errore su closedir");
 }
 
 //////////////////PARSER //////////////////
@@ -82,103 +106,101 @@ static void parser(int dim, char** array){
 
 	//il parsing è suddiviso in due cicli (si scandisce argv del main)
 
-	//ciclo 1: si gestiscono i comandi di setting -h, -f, -t, -p, -d, -D
+	//CICLO 1: si gestiscono i comandi di setting -h, -f, -t, -p, -d, -D
 	char* arg_D = NULL;
 	char* arg_d = NULL;
 	int i = 0;
 
-	while (++i < dim && !flag_h){
+	while (++i < dim){
 		
-		//case_h OK -> terima immediatamente
+		//CASO -h / NON COMPLETO: gestire uscita con relative procedure di cleanu
 		if (is_opt(array[i], "-h")){
 			case_h();
-			flag_h = 1;
+			exit(EXIT_FAILURE);
 		}
 		
-		//caso -f  OK
+		//CASO-f
 		if (is_opt(array[i], "-f")){
 			//argomento obbligatorio - controlla se esiste
-			if (!is_argument(i, dim, array[i])){ ec_meno1(-1, "argomento mancante"); }
+			if (!is_argument(array[i+1])){ ec_meno1(-1, "argomento mancante"); }
 			else{
-				i++;
-				int len = strlen(array[i]);
-				ec_null( (socket_name = malloc(sizeof(char)*len)), "errore malloc");
+				socket_name = array[++i];
 				//CLEANUP
 			}
 		}
-
-		//caso -t OK
+		
+		//CASO -t
 		if (is_opt(array[i], "-t")){
-			if ( !is_argument(i, dim, array[i]) ) time_r = 0;
+			if ( !is_argument(array[i+1]) ) time_r = 0;
 			else ec_meno1( (time_r = isNumber(array[++i])), "argomento errato");
 		}	
 
-		//caso -p	OK
-		if(is_opt(array[i], "-p")) flag_p = 1;
+		//CASO -p
+		if (is_opt(array[i], "-p")) flag_p = 1;
 
-		//caso -D OK
-		if(is_opt(array[i], "-D")){
+		//CASO -D
+		if (is_opt(array[i], "-D")){
 			flag_D = 1;
-			if ( is_argument(i, dim, array[i]) ){
-				i++;
-				int len = strlen(array[i]);
-				ec_null( (arg_D = malloc(sizeof(char)*len)), "errore malloc");
-				strncpy(arg_D, array[i], len);
+			if (is_argument(array[i+1])){
+				arg_D = array[++i];
 				//CLEANUP
 			}
 		}
 
-		//caso -d	OK
+		//CASO -d
 		if (is_opt(array[i], "-d")){
-			flag_d = 1;
-			if ( is_argument(i, dim, array[i]) ){
-				i++;
-				int len = strlen(array[i]);
-				ec_null( (arg_d = malloc(sizeof(char)*len)), "errore malloc");	//argomento arg_D = .../esempio/prova
-				strncpy(arg_d, array[i], len);
+			if (is_argument(array[i+1])){
+				flag_d = 1;
+				arg_d = array[++i];
+				//CLEANUP
 			}else{
 				printf("errore: argomento -d mancante\n");
 			}
 		}
 	}
-	//quando viene inserito -h il programma termina immediatamente
-	//cosa è necessario fare in questo caso? CLEANUP ecc?
-	if(flag_h){ printf("programa terminato dopo -h\n"); return; } 
 
-
-	//ciclo 2: si gestiscono i comandi di richiesta al server -w, -W, -R, -r, -l, -u, -c
+	//CICLO 2: si gestiscono i comandi di richiesta al server -w, -W, -R, -r, -l, -u, -c
 	i = 0;
-	while (++i < dim){
-		
-		//caso -w 
+	while (++i < dim){	
+		//CASO -w
 		if (is_opt(array[i], "-w")){		
-			//verifica che siano attivi -d o -D altrimenti errore
+			//1) verifica -d o -D attivo, altrimenti errore
 			if (!(flag_d || flag_D)){ printf("errore: -d / -D non attivi\n"); }
+			
 			else{
-				//passo 1: verifica che sia presente un argomento obbligatorio
-				if (is_argument(i, dim, array[i])){
-					//memorizza argomento in s
-					char* s;
-					mem_arg(&s, array[++i]);
-					printf("arg di -w = s: %s\n", s);
-					
-					//passo 2: verifica se presente argomento opzionale
-					int n;
-					if ( !is_argument(i, dim, array[i]) ) n = 0;
-					else ec_meno1( (n = isNumber(array[++i])), "argomento errato");
+				//2) verifica arg. obbligatorio
+				if (is_argument(array[i+1])){
+					char* arg_w = array[++i];
+
+					//3) verifica arg opzionale 
+					char* n = NULL;
+					int x;
+					//strtok_r restituisce il primo token appena dopo il primo delimitatore
+					strtok_r(array[i], ",", &n);
+					if (n == NULL) x = -1;
+					else ec_meno1((x = isNumber(n)), "errore: arg. non intero\n");
+					//CLEANUP
+					visit_folder_and_request(arg_w, x);
 				}
-				//visita la directory ed invia eventuali richieste
-			}	//visit_dir(s, n);
+				else printf("errore: argomento -w mancante\n");
+				
+				//4) visita la directory ed invia richieste di scrittura 
+			}	
 		}
 		
-		//caso -W
-		if (is_opt(array[i], "-W") && (flag_D || flag_d)){
-			//cosa accade se i flag non sono attivi? da gestire in un altro if questo caso?
-			if (is_argument(i, dim, array[i])){
-				mystrtok_r(array[++i]);
+		//CASO -W
+		if (is_opt(array[i], "-W")){
+			//1) verifica -d o -D attivo, altrimenti errore
+			if (!(flag_d || flag_D)){ printf("errore: -d / -D non attivi\n"); }
+			else{	
+				//argomento obbligatorio	
+				if (is_argument(array[i+1]))
+					mystrtok_r(array[++i]);
+				else printf("errore: argomento obligatorio\n");
 			}
 		}
-		/*
+
+/*		
 		if (is_opt(array[i], "-r") && (flag_D || flag_d) ){
 			printf("opzione -r riconosciuta\n");
 		}
@@ -197,15 +219,16 @@ static void parser(int dim, char** array){
 		}
 		if( strcmp((array[i]), "-c") == 0 ){
 			printf("opzione -c riconosciuta\n");
-		*/
+		
 		//gestione comandi non riconosciuti?
+*/
 	}
 }
 
 
 ////////////////// MAIN //////////////////
 int main(int argc, char* argv[]){
-
+	
 	//controllo su argc
 	if( argc == 1){
 		ERR_H(EINVAL, "errore su argomenti\n");
