@@ -67,39 +67,80 @@ void mystrtok_r (char* string){
 		token = strtok_r(NULL, ",", &save);
 	}
 }
-////////////////// IS_REGULAR_FILE //////////////////
 
-int is_regular_file(const char *path)
+
+////////////////// IS_REGULAR_FILE //////////////////
+int is_directory(const char *path)
 {
     struct stat path_stat;
-    stat(path, &path_stat);
-    return S_ISREG(path_stat.st_mode);
+    ec_meno1(lstat(path, &path_stat), "errore stat");
+    return S_ISDIR(path_stat.st_mode);
 }
 
 
+
+
+
+void listdir(const char *name, int indent)
+{
+    DIR *dir;
+    struct dirent *entry;
+
+    if (!(dir = opendir(name)))
+        return;
+
+	while ((entry = readdir(dir)) != NULL) {
+    		if (entry->d_type == DT_DIR) {
+        		char path[1024];
+            		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                		continue;
+            		snprintf(path, sizeof(path), "%s/%s", name, entry->d_name);
+            		printf("%*s[%s]\n", indent, "", entry->d_name);
+            		listdir(path, indent + 2);
+        	}else{
+        		printf("%*s- %s\n", indent, "", entry->d_name);
+        	}
+    }
+    closedir(dir);
+}
+
 ////////////////// VISIT_AND_REQUEST //////////////////
-void visit_folder_and_request(char* dirname, int n)
+void visit_folder_send_request(const char* dirname, int n)
 {
 	//passo 1: apertura directory dirname
 	DIR* d;
 	ec_null((d = opendir(dirname)), "errore su opendir");
+	printf("dir '%s' aperta\n", dirname);
 
 	//passo 2: lettura della directory
-	struct dirent* file;
-	while (errno == 0 && (file = readdir(d)) != NULL && n != 0){
-		printf("leggo %s\n", file->d_name);
-		//passo 3 caso 1: trovato un file -> aprilo e invia richiesta
-		if(is_regular_file(file->d_name)){
-			printf("richiesta di scrittura %s\n", file->d_name);
-			n--;
+	struct dirent* entry;
+	while (errno == 0 && ((entry = readdir(d)) != NULL) && n != 0) {
+		
+		//printf("entry->d_name: %s\n", entry->d_name);
+		char path[1024];
+		snprintf(path, sizeof(path), "%s/%s", dirname, entry->d_name);
+		
+		if(is_directory(path)){
+			//controlla che non si tratti della dir . o ..
+			if(strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0){
+				visit_folder_send_request(path, n);
+			}
 		}else{
-			//passo 3 caso 2: trovata una directory ->visita ricorsiva
-			visit_folder_and_request(file->d_name, n);
+			//si tratta di un file
+			printf("richiesta di scrittura file: %s\n", entry->d_name);
+			n--;
 		}
+
+	}
+	//controllo su errno
+	if (errno != 0){ 
+		perror("errore errno"); 
+		exit(EXIT_FAILURE);
 	}
 	//passo 4: chiudere la directory
 	ec_meno1(closedir(d), "errore su closedir");
 }
+
 
 //////////////////PARSER //////////////////
 static void parser(int dim, char** array){
@@ -180,7 +221,8 @@ static void parser(int dim, char** array){
 					if (n == NULL) x = -1;
 					else ec_meno1((x = isNumber(n)), "errore: arg. non intero\n");
 					//CLEANUP
-					visit_folder_and_request(arg_w, x);
+					visit_folder_send_request(arg_w, x);
+
 				}
 				else printf("errore: argomento -w mancante\n");
 				
