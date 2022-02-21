@@ -78,34 +78,8 @@ int is_directory(const char *path)
 }
 
 
-
-
-
-void listdir(const char *name, int indent)
-{
-    DIR *dir;
-    struct dirent *entry;
-
-    if (!(dir = opendir(name)))
-        return;
-
-	while ((entry = readdir(dir)) != NULL) {
-    		if (entry->d_type == DT_DIR) {
-        		char path[1024];
-            		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                		continue;
-            		snprintf(path, sizeof(path), "%s/%s", name, entry->d_name);
-            		printf("%*s[%s]\n", indent, "", entry->d_name);
-            		listdir(path, indent + 2);
-        	}else{
-        		printf("%*s- %s\n", indent, "", entry->d_name);
-        	}
-    }
-    closedir(dir);
-}
-
 ////////////////// VISIT_AND_REQUEST //////////////////
-void visit_folder_send_request(const char* dirname, int n)
+void visit_folder_send_request(const char* dirname, int* n)
 {
 	//passo 1: apertura directory dirname
 	DIR* d;
@@ -114,30 +88,30 @@ void visit_folder_send_request(const char* dirname, int n)
 
 	//passo 2: lettura della directory
 	struct dirent* entry;
-	while (errno == 0 && ((entry = readdir(d)) != NULL) && n != 0) {
-		
-		//printf("entry->d_name: %s\n", entry->d_name);
+	while (errno == 0 && ((entry = readdir(d)) != NULL) && *n != 0) {
+		//passo 3 : aggiornamento path
 		char path[1024];
 		snprintf(path, sizeof(path), "%s/%s", dirname, entry->d_name);
 		
+		//passo 4 caso 1: controlla che se si tratta di una dir
 		if(is_directory(path)){
+			
 			//controlla che non si tratti della dir . o ..
-			if(strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0){
+			if(strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
+				//visita ricorsiva su nuova directory
 				visit_folder_send_request(path, n);
-			}
 		}else{
-			//si tratta di un file
+			//passo 4 caso 2: è un file
 			printf("richiesta di scrittura file: %s\n", entry->d_name);
-			n--;
+			(*n)--;
 		}
-
 	}
 	//controllo su errno
 	if (errno != 0){ 
 		perror("errore errno"); 
 		exit(EXIT_FAILURE);
 	}
-	//passo 4: chiudere la directory
+	//chiudere la directory
 	ec_meno1(closedir(d), "errore su closedir");
 }
 
@@ -166,7 +140,6 @@ static void parser(int dim, char** array){
 			if (!is_argument(array[i+1])){ ec_meno1(-1, "argomento mancante"); }
 			else{
 				socket_name = array[++i];
-				//CLEANUP
 			}
 		}
 		
@@ -205,28 +178,33 @@ static void parser(int dim, char** array){
 	while (++i < dim){	
 		//CASO -w
 		if (is_opt(array[i], "-w")){		
-			//1) verifica -d o -D attivo, altrimenti errore
-			if (!(flag_d || flag_D)){ printf("errore: -d / -D non attivi\n"); }
 			
-			else{
+			//1) verifica -d/-D attivo altrimenti errore
+			if (!(flag_d || flag_D)){ 
+				printf("errore: -d / -D non attivi\n"); 
+			}else{
 				//2) verifica arg. obbligatorio
 				if (is_argument(array[i+1])){
 					char* arg_w = array[++i];
-
+					
 					//3) verifica arg opzionale 
 					char* n = NULL;
 					int x;
 					//strtok_r restituisce il primo token appena dopo il primo delimitatore
 					strtok_r(array[i], ",", &n);
+					//se n non è specificata
 					if (n == NULL) x = -1;
-					else ec_meno1((x = isNumber(n)), "errore: arg. non intero\n");
+					else {
+						//se n è un numero 
+						ec_meno1((x = isNumber(n)), "errore: arg. non intero\n");
+						//se zero è come non presente -> setto a -1
+						if(x == 0) x = -1; 
+					}
 					//CLEANUP
-					visit_folder_send_request(arg_w, x);
+					visit_folder_send_request(arg_w, &x);
 
 				}
 				else printf("errore: argomento -w mancante\n");
-				
-				//4) visita la directory ed invia richieste di scrittura 
 			}	
 		}
 		
