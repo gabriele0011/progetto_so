@@ -13,8 +13,20 @@ char *socket_name = NULL; //controllo memoria
 char* arg_D = NULL;
 char* arg_d = NULL;
 
+
+static void case_h();
+static long isNumber(const char* s);
+static int is_opt( char* arg, char* opt);
+static int is_argument(char* c);
+static int is_directory(const char *path);
+static void visit_folder_send_request(const char* dirname, int* n);
+static void case_w(char* arg_w);
+static void parser(int dim, char** array);
+static void append_file(const char* s);
+
+
 ////////////////// ISNUMBER //////////////////
-long isNumber(const char* s)
+static long isNumber(const char* s)
 {
 	char* e = NULL;
    	long val = strtol(s, &e, 0);
@@ -34,7 +46,7 @@ static void case_h()
 	if (!fp){
 		perror("fopen");
 		exit(EXIT_FAILURE);
-    	*/
+    */
 	//lettura file in array di n char
     	size_t n = 10;
 	char buf[n];
@@ -59,6 +71,7 @@ static int is_opt( char* arg, char* opt)
 	//elimina la stampa di opt -> qui solo per debug
 }
 
+
 ////////////////// IS_ARGUMENT //////////////////
 static int is_argument(char* c)
 {
@@ -68,7 +81,7 @@ static int is_argument(char* c)
 
 
 ////////////////// IS_ARGUMENT //////////////////
-void mystrtok_r (char* string)
+static void mystrtok_r (char* string)
 {
 	//(!)problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
 	//si puo gestire direttamente da qui?
@@ -83,8 +96,8 @@ void mystrtok_r (char* string)
 }
 
 
-////////////////// IS_REGULAR_FILE //////////////////
-int is_directory(const char *path)
+////////////////// is_directory //////////////////
+static int is_directory(const char *path)
 {
     struct stat path_stat;
     ec_meno1(lstat(path, &path_stat), "errore stat");
@@ -92,9 +105,41 @@ int is_directory(const char *path)
 }
 
 
+////////////////// append_file //////////////////
+static void append_file(const char* f_name)
+{
+	//necess. allocare un buf(array di char) che contiene il testo del file e ha quindi dimensione in byte del file
+	//ricavare le dimensioni in byte del file con stat
+	//scrittura del buf e conseguente appendToFile
 
-////////////////// VISIT_FOLDER //////////////////
-void visit_folder_send_request(const char* dirname, int* n)
+	//apertura del file
+	FILE *fp;
+	ec_meno1((fp = open(f_name, O_RDONLY)), "open in append_file");
+
+	//stat per ricavare dimensione file
+	struct stat path_stat;
+    	ec_meno1(lstat(f_name, &path_stat), "errore stat");
+
+    	//allocazione buf[size]
+    	size_t file_size = path_stat.st_size;;
+    	char* buf;
+ 	buf = ec_null(calloc(sizeof(char)*size), "malloc in append_file");
+
+ 	//scrittura del buf
+ 	ec_meno1(read(fd, buf, file_size, arg_d), "read");
+ 	
+ 	ec_meno1(close(fp), "errore close in append_file");
+
+ 	//appendToFile per scrittura f_name atomica
+ 	ec_meno1(appendToFile(f_name, buf, size, arg_d), "appendToFile in append_file");
+
+ 	if(!buf) free(buf);
+ 	return 0;
+}
+
+
+////////////////// visit_folder_send_requst //////////////////
+static void visitFolder_sendRequest(const char* dirname, int* n)
 {
 	//passo 1: apertura directory dirname
 	DIR* d;
@@ -114,7 +159,7 @@ void visit_folder_send_request(const char* dirname, int* n)
 			//controlla che non si tratti della dir . o ..
 			if(strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
 				//visita ricorsiva su nuova directory
-				visit_folder_send_request(path, n);
+				visitFolder_sendRequest(path, n);
 		}else{
 			//passo 4 caso 2: è un file
 			printf("richiesta di scrittura file: %s\n", entry->d_name);
@@ -129,12 +174,11 @@ void visit_folder_send_request(const char* dirname, int* n)
 			if (openFile(entry->d_name, O_CREATE||O_LOCK) != 0){
 				perror("file esistente");
 				//file già esistente si scrive (aggiorna) con append
-				//(?) cosa voglio scrivere?
-				append_file(entry->d_name, arg_d)
+				if (append_file(entry->d_name) != 0 ) LOG_ERR(-1, "append_file fallita");
 			}else{
 				ec_meno1(openFile(entry->d_name, O_LOCK), "openFile fallita");
 				//file aperto o creato in mod locked
-				writeFile(entry->d_name, arg_d);
+				writeFile(entry->d_name, arg_d);						//SONO QUI
 			}
 			(*n)--;
 		}
@@ -148,9 +192,9 @@ void visit_folder_send_request(const char* dirname, int* n)
 	ec_meno1(closedir(d), "errore su closedir");
 }
 
-////////////////// CASE_H //////////////////
 
-void case_w(char* arg_w)
+////////////////// CASE_H //////////////////
+static void case_w(char* arg_w)
 {
 		//in seguito in dirname salvo la directory contenuta in arg_w
 		char* dirname;
@@ -172,7 +216,7 @@ void case_w(char* arg_w)
 			//se uguale a zero come non fosse presente -> x = -1
 			if (x == 0) x = -1;
 		}
-		visit_folder(dirname, &x);
+		visitFolder_sendRequest(dirname, &x);
 }
 
 ////////////////// PARSER //////////////////
