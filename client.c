@@ -22,10 +22,10 @@ static int is_directory(const char *path);
 static void visit_folder_send_request(const char* dirname, int* n);
 static void case_w(char* arg_w);
 static void parser(int dim, char** array);
-static void append_file(const char* s);
+static int append_file(const char* s);
 
 
-////////////////// ISNUMBER //////////////////
+////////////////// isNumber //////////////////
 static long isNumber(const char* s)
 {
 	char* e = NULL;
@@ -35,7 +35,7 @@ static long isNumber(const char* s)
 }
 
 
-////////////////// CASE_H //////////////////
+////////////////// case_h //////////////////
 static void case_h()
 {
 	//apertura file
@@ -63,7 +63,7 @@ static void case_h()
 }
 
 
-////////////////// IS_OPT //////////////////
+////////////////// is_opt //////////////////
 static int is_opt( char* arg, char* opt)
 {
 	if(strcmp(arg, opt) == 0 && printf("opt %s riconosciuto\n", opt) ) return 1;
@@ -72,7 +72,7 @@ static int is_opt( char* arg, char* opt)
 }
 
 
-////////////////// IS_ARGUMENT //////////////////
+////////////////// is_argument //////////////////
 static int is_argument(char* c)
 {
 	if (c == NULL || (*c == '-') ) return 0;
@@ -80,7 +80,7 @@ static int is_argument(char* c)
 }
 
 
-////////////////// IS_ARGUMENT //////////////////
+////////////////// mystrtok_r //////////////////
 static void mystrtok_r (char* string)
 {
 	//(!)problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
@@ -104,17 +104,21 @@ static int is_directory(const char *path)
     return S_ISDIR(path_stat.st_mode);
 }
 
+int appendToFile(const char* f_name, char* buf, int dim_buf, char* arg){ int d; scanf("appendToFile: 0/1\n%d", &d); return d;}
+int writeFile(const char* f_name, char* arg){ int d; scanf("wrteFile: 0/1\n%d", &d); return d;}
+int openFile(const char* fname, int n){ int d; scanf("openFile: 0/1\n%d", &d); return d;}
+
 
 ////////////////// append_file //////////////////
-static void append_file(const char* f_name)
+static int append_file(const char* f_name)
 {
 	//necess. allocare un buf(array di char) che contiene il testo del file e ha quindi dimensione in byte del file
 	//ricavare le dimensioni in byte del file con stat
 	//scrittura del buf e conseguente appendToFile
 
 	//apertura del file
-	FILE *fp;
-	ec_meno1((fp = open(f_name, O_RDONLY)), "open in append_file");
+	int fd;
+	ec_meno1( (fd = open(f_name, O_RDONLY)), "open in append_file");
 
 	//stat per ricavare dimensione file
 	struct stat path_stat;
@@ -122,17 +126,20 @@ static void append_file(const char* f_name)
 
     	//allocazione buf[size]
     	size_t file_size = path_stat.st_size;;
+    	printf("file_size = %zu\n", file_size);
     	char* buf;
- 	buf = ec_null(calloc(sizeof(char)*size), "malloc in append_file");
+ 	ec_null( (buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
 
  	//scrittura del buf
- 	ec_meno1(read(fd, buf, file_size, arg_d), "read");
- 	
- 	ec_meno1(close(fp), "errore close in append_file");
+ 	ec_meno1(read(fd, buf, file_size), "read");
+ 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
+
+ 	ec_meno1(close(fd), "errore close in append_file");
 
  	//appendToFile per scrittura f_name atomica
- 	ec_meno1(appendToFile(f_name, buf, size, arg_d), "appendToFile in append_file");
+ 	ec_meno1(appendToFile(f_name, buf, file_size, arg_d), "appendToFile in append_file");
 
+ 	printf("fine append_file\n");
  	if(!buf) free(buf);
  	return 0;
 }
@@ -154,46 +161,48 @@ static void visitFolder_sendRequest(const char* dirname, int* n)
 		snprintf(path, sizeof(path), "%s/%s", dirname, entry->d_name);
 		
 		//passo 4 caso 1: controlla che se si tratta di una dir
-		if(is_directory(path)){
+		if (is_directory(path)){
 			
 			//controlla che non si tratti della dir . o ..
-			if(strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
+			if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
 				//visita ricorsiva su nuova directory
 				visitFolder_sendRequest(path, n);
 		}else{
+			send_write_request(entry->d_name)
 			//passo 4 caso 2: è un file
 			printf("richiesta di scrittura file: %s\n", entry->d_name);
 
 			//openFile/appendToFile/writeFile funzionamento:
 			//openFile apre un file -> il file puo essere gia presente sul server oppure va creato
-			//se esiste gia lo si scrive (aggiorna) con appendToFile
-			//se si tratta di un nuovo file lo si scrive in lock con writeFile
+			//se esiste gia lo si scrive (aggiorna) con appendToFile atomicamente
+			//se si tratta di un nuovo file, lo si scrive in lock con writeFile
 
-			//verificare anche errno per distinguere i casi
 
-			if (openFile(entry->d_name, O_CREATE||O_LOCK) != 0){
-				perror("file esistente");
-				//file già esistente si scrive (aggiorna) con append
-				if (append_file(entry->d_name) != 0 ) LOG_ERR(-1, "append_file fallita");
+			if (/*openFile(entry->d_name, O_CREATE||O_LOCK)*/ openFile(entry->d_name, 1) != 0){
+				printf("file esistente -> scrittura in append\n");
+				
+				//file già esistente -> scrive (aggiorna) con append_file -> appendToFile
+				if (errno == 0 && append_file(entry->d_name) != 0){ 
+					LOG_ERR(-1, "append_file fallita"); 
+				}
 			}else{
-				ec_meno1(openFile(entry->d_name, O_LOCK), "openFile fallita");
+				//file non presente sul server -> nuovo file da scrivere in lock
+				printf("file non esistente -> scrittura con writeFile\n");
+				
+				ec_meno1(/*openFile(entry->d_name, O_LOCK)*/openFile(entry->d_name, 2), "openFile fallita");
 				//file aperto o creato in mod locked
-				writeFile(entry->d_name, arg_d);						//SONO QUI
+				ec_meno1(writeFile(entry->d_name, arg_d), "writeFile error");						//SONO QUI
+				printf("WriteFile effettuata\n");
 			}
 			(*n)--;
 		}
-	}
-	//controllo su errno
-	if (errno != 0){ 
-		perror("errore errno"); 
-		exit(EXIT_FAILURE);
 	}
 	//chiudere la directory
 	ec_meno1(closedir(d), "errore su closedir");
 }
 
 
-////////////////// CASE_H //////////////////
+////////////////// case_h //////////////////
 static void case_w(char* arg_w)
 {
 		//in seguito in dirname salvo la directory contenuta in arg_w
@@ -219,7 +228,7 @@ static void case_w(char* arg_w)
 		visitFolder_sendRequest(dirname, &x);
 }
 
-////////////////// PARSER //////////////////
+////////////////// parser //////////////////
 static void parser(int dim, char** array){
 
 	//il parsing è suddiviso in due cicli (si scandisce argv del main)
@@ -383,7 +392,7 @@ static void parser(int dim, char** array){
 }
 
 
-////////////////// MAIN //////////////////
+////////////////// main //////////////////
 int main(int argc, char* argv[]){
 	
 	//controllo su argc
