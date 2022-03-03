@@ -23,6 +23,8 @@ static void visit_folder_send_request(const char* dirname, int* n);
 static void case_w(char* arg_w);
 static void parser(int dim, char** array);
 static int append_file(const char* s);
+static int write_request(const char* arg_W);
+
 
 
 ////////////////// isNumber //////////////////
@@ -38,28 +40,23 @@ static long isNumber(const char* s)
 ////////////////// case_h //////////////////
 static void case_h()
 {
-	//apertura file
-	FILE *fp;
-	ec_null((fp = fopen("help.txt", "r")), "errore su fopen in case_h");
-    /*
-     	//controllo esito apertura
-	if (!fp){
-		perror("fopen");
-		exit(EXIT_FAILURE);
-    */
-	//lettura file in array di n char
-    	size_t n = 10;
-	char buf[n];
-    	//scandisco il file fino alla fine
-	size_t temp;
-	while (!feof(fp) && (temp = fread(buf, sizeof(char), n, fp)) != 0 ){
-		for (int i = 0; i < temp; i++)
-			printf("%c", buf[i]);
-  	}
-	if (fclose(fp) != 0){
-		perror("errore fclose in case_h"); 
-		exit(EXIT_FAILURE); 
-	}
+	int fd;
+	ec_meno1((fd=open("help.txt", O_RDONLY)), "errore open in case_h");
+	
+	struct stat path_stat;
+    	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
+
+    	//allocazione buf[size]
+    	size_t file_size = path_stat.st_size;
+    	char* buf;
+ 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
+
+ 	//lettura file + scrittura del buf
+ 	ec_meno1(read(fd, buf, file_size), "read");
+ 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
+ 	
+ 	ec_meno1(close(fd), "errore close in append_file");
+ 	if(!buf) free(buf);
 }
 
 
@@ -80,17 +77,19 @@ static int is_argument(char* c)
 }
 
 
-////////////////// mystrtok_r //////////////////
-static void mystrtok_r (char* string)
+////////////////// case_W //////////////////
+static void case_W (char* arg_W)
 {
 	//(!)problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
 	//si puo gestire direttamente da qui?
 	//rivaluta dopo l'implementazione dell'API
 
 	char* save = NULL;
-	char* token = strtok_r(string, ",", &save );
+	char* token = strtok_r(arg_W, ",", &save);
 	while (token){
-		printf("%s\n", token);
+		//su ogni toker che rappresenta il nome del file invio una richiesta di scrittura
+		printf("richiesta di scrittura su %s\n", token);
+		write_request(token);
 		token = strtok_r(NULL, ",", &save);
 	}
 }
@@ -104,9 +103,10 @@ static int is_directory(const char *path)
     return S_ISDIR(path_stat.st_mode);
 }
 
-int appendToFile(const char* f_name, char* buf, int dim_buf, char* arg){ int d; scanf("appendToFile: 0/1\n%d", &d); return d;}
-int writeFile(const char* f_name, char* arg){ int d; scanf("wrteFile: 0/1\n%d", &d); return d;}
-int openFile(const char* fname, int n){ int d; scanf("openFile: 0/1\n%d", &d); return d;}
+//funzioni test per append_file -  esito positivo 0 / errore -1
+int appendToFile(const char* f_name, char* buf, int dim_buf, char* arg){ return 0;}
+int writeFile(const char* f_name, char* arg){ return 0; }
+int openFile(const char* fname, int n){ int d; return 0; }
 
 
 ////////////////// append_file //////////////////
@@ -118,32 +118,60 @@ static int append_file(const char* f_name)
 
 	//apertura del file
 	int fd;
-	ec_meno1( (fd = open(f_name, O_RDONLY)), "open in append_file");
+	ec_meno1((fd = open(f_name, O_RDONLY)), "open in append_file");
 
 	//stat per ricavare dimensione file
 	struct stat path_stat;
     	ec_meno1(lstat(f_name, &path_stat), "errore stat");
 
     	//allocazione buf[size]
-    	size_t file_size = path_stat.st_size;;
+    	size_t file_size = path_stat.st_size;
     	printf("file_size = %zu\n", file_size);
     	char* buf;
- 	ec_null( (buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
+ 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
 
- 	//scrittura del buf
+ 	//lettura file + scrittura del buf
  	ec_meno1(read(fd, buf, file_size), "read");
- 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
-
  	ec_meno1(close(fd), "errore close in append_file");
 
  	//appendToFile per scrittura f_name atomica
  	ec_meno1(appendToFile(f_name, buf, file_size, arg_d), "appendToFile in append_file");
 
- 	printf("fine append_file\n");
+ 	//cleanup
  	if(!buf) free(buf);
  	return 0;
 }
 
+////////////////// write_request //////////////////
+static int write_request(const char* f_name)
+{
+	//openFile/appendToFile/writeFile funzionamento:
+	//openFile apre un file -> il file puo essere gia presente sul server oppure va creato
+	//se esiste gia lo si scrive (aggiorna) con appendToFile atomicamente
+	//se si tratta di un nuovo file, lo si scrive in lock con writeFile
+
+
+	if (/*openFile(entry->d_name, O_CREATE||O_LOCK)*/ openFile(f_name, 1) != 0){
+		printf("file esistente -> scrittura in append\n");
+				
+		//file già esistente -> scrive (aggiorna) con append_file -> appendToFile
+		//(!) errno dovrebbe indicare che la open ha fallito perché il file esiste gia e questa condizione si usa nell'if
+		if (append_file(f_name) != 0){ 
+			LOG_ERR(-1, "append_file fallita"); 
+		}
+	}else{
+		//file non presente sul server -> nuovo file da scrivere in lock
+		printf("file non esistente -> scrittura con writeFile\n");
+		//apertura file in lock		
+		ec_meno1(/*openFile(entry->d_name, O_LOCK)*/openFile(f_name, 2), "openFile fallita");
+		//file aperto o creato in mod locked
+		ec_meno1(writeFile(f_name, arg_d), "writeFile error");						
+		printf("WriteFile effettuata\n");
+	}
+	return 0;
+
+
+}
 
 ////////////////// visit_folder_send_requst //////////////////
 static void visitFolder_sendRequest(const char* dirname, int* n)
@@ -167,32 +195,11 @@ static void visitFolder_sendRequest(const char* dirname, int* n)
 			if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
 				//visita ricorsiva su nuova directory
 				visitFolder_sendRequest(path, n);
+		//passo 4 caso 2: richiesta di scrittura
 		}else{
-			send_write_request(entry->d_name)
-			//passo 4 caso 2: è un file
-			printf("richiesta di scrittura file: %s\n", entry->d_name);
-
-			//openFile/appendToFile/writeFile funzionamento:
-			//openFile apre un file -> il file puo essere gia presente sul server oppure va creato
-			//se esiste gia lo si scrive (aggiorna) con appendToFile atomicamente
-			//se si tratta di un nuovo file, lo si scrive in lock con writeFile
-
-
-			if (/*openFile(entry->d_name, O_CREATE||O_LOCK)*/ openFile(entry->d_name, 1) != 0){
-				printf("file esistente -> scrittura in append\n");
-				
-				//file già esistente -> scrive (aggiorna) con append_file -> appendToFile
-				if (errno == 0 && append_file(entry->d_name) != 0){ 
-					LOG_ERR(-1, "append_file fallita"); 
-				}
-			}else{
-				//file non presente sul server -> nuovo file da scrivere in lock
-				printf("file non esistente -> scrittura con writeFile\n");
-				
-				ec_meno1(/*openFile(entry->d_name, O_LOCK)*/openFile(entry->d_name, 2), "openFile fallita");
-				//file aperto o creato in mod locked
-				ec_meno1(writeFile(entry->d_name, arg_d), "writeFile error");						//SONO QUI
-				printf("WriteFile effettuata\n");
+			if (write_request(entry->d_name) != 0){ 
+				LOG_ERR(-1, "errore write_request"); 
+				exit(EXIT_FAILURE); 
 			}
 			(*n)--;
 		}
@@ -239,7 +246,7 @@ static void parser(int dim, char** array){
 
 	while (++i < dim){
 		
-		//CASO -h / NON COMPLETO: gestire uscita con relative procedure di cleanu
+		//CASO -h
 		if (is_opt(array[i], "-h")) {
 			case_h();
 			exit(EXIT_FAILURE);
@@ -247,11 +254,13 @@ static void parser(int dim, char** array){
 		
 		//CASO-f
 		if (is_opt(array[i], "-f")) {
-			//argomento obbligatorio - controlla se esiste
-			if (!is_argument(array[i+1])){ 
+			//argomento obbligatorio
+			if (is_argument(array[i+1])){ 
+				socket_name = array[++i]; 
+			}else{ 
 				LOG_ERR(EINVAL, "argomento -t mancante");
 				exit(EXIT_FAILURE); 
-			}else{ socket_name = array[++i]; }
+			}
 		}
 		
 		//CASO -t
@@ -263,18 +272,22 @@ static void parser(int dim, char** array){
 		//CASO -p
 		if (is_opt(array[i], "-p")) flag_p = 1;
 
+
 		//CASO -D
 		if (is_opt(array[i], "-D")) {
-			flag_D = 1;
-			if (is_argument(array[i+1])) arg_D = array[++i];
+			if (is_argument(array[i+1])) {
+				flag_D = 1;
+				arg_D = array[++i];
+			}else{
+				LOG_ERR(EINVAL, "argomento -D mancante");
+				exit(EXIT_FAILURE);
+			}
 		}
-
 		//CASO -d 
 		if (is_opt(array[i], "-d")) {
 			if (is_argument(array[i+1])) {
 				flag_d = 1;
 				arg_d = array[++i];
-				//CLEANUP
 			}else{
 				LOG_ERR(EINVAL, "argomento -d mancante");
 				exit(EXIT_FAILURE);
@@ -309,9 +322,9 @@ static void parser(int dim, char** array){
 		//CASO -W
 		if (is_opt(array[i], "-W")) {
 			//argomento obbligatorio	
-			if (is_argument(array[i+1]))
-				mystrtok_r(array[++i]);
-			else{
+			if (is_argument(array[i+1])){
+				case_W(array[++i]);
+			}else{
 				LOG_ERR(EINVAL, "argomento -W mancante");
 				exit(EXIT_FAILURE);
 			}
