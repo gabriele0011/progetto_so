@@ -24,7 +24,18 @@ static void case_w(char* arg_w);
 static void parser(int dim, char** array);
 static int append_file(const char* s);
 static int write_request(const char* arg_W);
+static int case_l(const char* arg_l);
+static int case_u(const char* arg_u);
+static int case_c(const char* arg_c);
 
+//funzioni test per append_file -  esito positivo 0 / errore -1
+int appendToFile(const char* f_name, char* buf, int dim_buf, char* arg){ return 0;}
+int writeFile(const char* f_name, char* arg){ return 0; }
+int openFile(const char* f_name, int n){ int d; return 0; }
+int readFile(const char* f_name, void** buf, size_t* size){ return 0; }
+int lockFile(const char* f_name){ return 0; }
+int unlockFile(const char* f_name){ return 0; }
+int remvoveFile(const char* f_name){ return 0; }
 
 
 ////////////////// isNumber //////////////////
@@ -35,30 +46,6 @@ static long isNumber(const char* s)
    	if (e != NULL && *e == (char)0) return val; 
 	return -1;
 }
-
-
-////////////////// case_h //////////////////
-static void case_h()
-{
-	int fd;
-	ec_meno1((fd=open("help.txt", O_RDONLY)), "errore open in case_h");
-	
-	struct stat path_stat;
-    	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
-
-    	//allocazione buf[size]
-    	size_t file_size = path_stat.st_size;
-    	char* buf;
- 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
-
- 	//lettura file + scrittura del buf
- 	ec_meno1(read(fd, buf, file_size), "read");
- 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
- 	
- 	ec_meno1(close(fd), "errore close in append_file");
- 	if(!buf) free(buf);
-}
-
 
 ////////////////// is_opt //////////////////
 static int is_opt( char* arg, char* opt)
@@ -76,6 +63,36 @@ static int is_argument(char* c)
 	else return 1;
 }
 
+////////////////// is_directory //////////////////
+static int is_directory(const char *path)
+{
+    struct stat path_stat;
+    ec_meno1(lstat(path, &path_stat), "errore stat");
+    return S_ISDIR(path_stat.st_mode);
+}
+
+////////////////// case_h //////////////////
+static void case_h()
+{
+	int fd;
+	ec_meno1((fd=open("help.txt", O_RDONLY)), "errore open in case_h");
+	
+	struct stat path_stat;
+    	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
+
+    	//allocazione buf[size]
+    	size_t file_size = path_stat.st_size;
+    	char* buf;
+ 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
+
+ 	//lettura file + scrittura del buf
+ 	ec_meno1(read(fd, buf, file_size), "read");
+ 	//stampa buf
+ 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
+ 	
+ 	ec_meno1(close(fd), "errore close in append_file");
+ 	if(!buf) free(buf);
+}
 
 ////////////////// case_W //////////////////
 static void case_W (char* arg_W)
@@ -94,19 +111,24 @@ static void case_W (char* arg_W)
 	}
 }
 
-
-////////////////// is_directory //////////////////
-static int is_directory(const char *path)
+////////////////// case_r //////////////////
+static void case_r (char* arg_r)
 {
-    struct stat path_stat;
-    ec_meno1(lstat(path, &path_stat), "errore stat");
-    return S_ISDIR(path_stat.st_mode);
-}
+	//(!)problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
+	//si puo gestire direttamente da qui?
+	//rivaluta dopo l'implementazione dell'API
 
-//funzioni test per append_file -  esito positivo 0 / errore -1
-int appendToFile(const char* f_name, char* buf, int dim_buf, char* arg){ return 0;}
-int writeFile(const char* f_name, char* arg){ return 0; }
-int openFile(const char* fname, int n){ int d; return 0; }
+	char* save = NULL;
+	char* token = strtok_r(arg_r, ",", &save);
+	while (token){
+		//su ogni toker che rappresenta il nome del file invio una richiesta di scrittura
+		printf("richiesta di lettura su server di: %s\n", token);
+		void **buf;
+		size_t* size;
+		ec_meno1(readFile(token, buf, size), "readFile fallita");
+		token = strtok_r(NULL, ",", &save);
+	}
+}
 
 
 ////////////////// append_file //////////////////
@@ -150,7 +172,6 @@ static int write_request(const char* f_name)
 	//se esiste gia lo si scrive (aggiorna) con appendToFile atomicamente
 	//se si tratta di un nuovo file, lo si scrive in lock con writeFile
 
-
 	if (/*openFile(entry->d_name, O_CREATE||O_LOCK)*/ openFile(f_name, 1) != 0){
 		printf("file esistente -> scrittura in append\n");
 				
@@ -169,8 +190,6 @@ static int write_request(const char* f_name)
 		printf("WriteFile effettuata\n");
 	}
 	return 0;
-
-
 }
 
 ////////////////// visit_folder_send_requst //////////////////
@@ -233,6 +252,46 @@ static void case_w(char* arg_w)
 			if (x == 0) x = -1;
 		}
 		visitFolder_sendRequest(dirname, &x);
+}
+
+
+////////////////// case_l //////////////////
+static void case_l(const char* arg_l)
+{
+	char* save = NULL;
+	char* token = strtok_r(arg_l, ",", &save);
+	while (token){
+		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
+		printf("richiesta di lock su: %s\n", token);
+		ec_meno1(lockFile(token), "lockFile fallita");
+		token = strtok_r(NULL, ",", &save);
+	}
+}
+
+////////////////// case_u //////////////////
+static void case_u(const char* arg_u)
+{
+	char* save = NULL;
+	char* token = strtok_r(arg_u, ",", &save);
+	while (token){
+		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
+		printf("richiesta di unlock su: %s\n", token);
+		ec_meno1(unlockFile(token), "unlockFile fallita");
+		token = strtok_r(NULL, ",", &save);
+	}
+}
+
+////////////////// case_c //////////////////
+static void case_c(const char* arg_c)
+{
+	char* save = NULL;
+	char* token = strtok_r(arg_l, ",", &save);
+	while (token){
+		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
+		printf("richiesta di cancellazione su: %s\n", token);
+		ec_meno1(remvoveFile(token), "removeFile fallita");
+		token = strtok_r(NULL, ",", &save);
+	}
 }
 
 ////////////////// parser //////////////////
@@ -307,7 +366,7 @@ static void parser(int dim, char** array){
 	i = 0;
 
 	while (++i < dim){	
-		
+
 		//CASO -w
 		if (is_opt(array[i], "-w")) {		
 			//2) verifica arg. obbligatorio
@@ -333,10 +392,8 @@ static void parser(int dim, char** array){
 		//CASO -r
 		if (is_opt(array[i], "-r")) {
 			if (is_argument(array[i+1])) {
-				//altera la stringa?
-				//mystrtok_r(array[++i]);
-				//lista di nomi da leggere nel server
 				//richiesta di lettura al server per ogni file
+				case_r(array[++i]);
 
 			}else{
 				LOG_ERR(EINVAL, "argomento -r mancante");
@@ -344,23 +401,22 @@ static void parser(int dim, char** array){
 			}
 		}
 	
-
 		//CASO -R
 		if (is_opt(array[i], "-R")){
 			//puoi chiamare readfile o readnfile rispetto al paramentro n che riceve
 			//se n=0 o non presente legge tutti i file del server
-			//altrimenti ne legge n
-			//caso in cui n è presente: n=0 : n>0?
+			//altrimenti ne legge n e li momorizza in arg_d
+			
+			//caso in cui è presente n
 			if (is_argument(array[i+1])) {
 				size_t x;
 				ec_meno1((x = isNumber(array[++i])), "errore: arg. -w n non intero\n");
-				if (x == 0) printf("rchiedere lettura di tutti i file nel server\n");
-				else printf("richiedere lettura di n file nel server\n");
+				if (x == 0) ec_meno1(readNfile(-1, arg_d), "readNfile fallita");
+				else ec_meno1(readNfile(x, arg_d), "readNfile fallita");
+			//caso in cui n non è presente
 			}else{
-				//caso in cui n non è presente
-				printf("rchiedere lettura di tutti i file nel server\n");
+				ec_meno1(readNfile(-1, arg_d), "readNfile fallita");
 			}
-
 
 		}
 
@@ -374,6 +430,7 @@ static void parser(int dim, char** array){
 		//CASO -l
 		if (is_opt(array[i], "-l")){
 			if (is_argument(array[i+1])){
+				case_l(array[++i]);
 				printf("lista di nomi di file su cui acquisire la mutua esclusione\n");
 			}else{
 				LOG_ERR(EINVAL, "argomento -l mancante");
@@ -385,6 +442,7 @@ static void parser(int dim, char** array){
 		if (is_opt(array[i], "-u")){
 			if (is_argument(array[i+1])){
 				printf("lista di nomi di file su cui rilasciare la mutua esclusione\n");
+				case_u(array[++i]);
 			}else{
 				LOG_ERR(EINVAL, "argomento -u mancante");
 				exit(EXIT_FAILURE);
@@ -395,6 +453,7 @@ static void parser(int dim, char** array){
 		if (is_opt(array[i], "-c")){
 			if (is_argument(array[i+1])){
 				printf("lista di file da rimuovere dal server se presenti\n");
+				case_c(array[++i]);
 			}else{
 				LOG_ERR(EINVAL, "argomento -c mancante");
 				exit(EXIT_FAILURE);
