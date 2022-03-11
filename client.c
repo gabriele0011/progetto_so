@@ -9,9 +9,10 @@ int flag_rR = 0;
 int flag_wW = 0;
 int time_r = 0;
 int flag_h = 0;
-char *socket_name = NULL; //controllo memoria
-char* arg_D = NULL;
+char *socket_name = NULL;
 char* arg_d = NULL;
+char* arg_D = NULL;
+
 
 
 static void case_h();
@@ -19,14 +20,16 @@ static long isNumber(const char* s);
 static int is_opt( char* arg, char* opt);
 static int is_argument(char* c);
 static int is_directory(const char *path);
-static void visit_folder_send_request(const char* dirname, int* n);
-static void case_w(char* arg_w);
+static void visitFolder_sendRequest(const char* dirname, int* n);
 static void parser(int dim, char** array);
 static int append_file(const char* s);
 static int write_request(const char* arg_W);
-static int case_l(const char* arg_l);
-static int case_u(const char* arg_u);
-static int case_c(const char* arg_c);
+static void case_w(char* arg_w);
+static void case_l( char* arg_l);
+static void case_u( char* arg_u);
+static void case_c( char* arg_c);
+static void set_socket(const char* socket_name);
+
 
 //funzioni test per append_file -  esito positivo 0 / errore -1
 int appendToFile(const char* f_name, char* buf, int dim_buf, char* arg){ return 0;}
@@ -36,6 +39,9 @@ int readFile(const char* f_name, void** buf, size_t* size){ return 0; }
 int lockFile(const char* f_name){ return 0; }
 int unlockFile(const char* f_name){ return 0; }
 int remvoveFile(const char* f_name){ return 0; }
+int readNFiles(int n, const char* dirname ){ return 0; }
+int openConnection(const char* sockname, int msec, const struct timespec abstime){ return 0; }
+
 
 
 ////////////////// isNumber //////////////////
@@ -50,9 +56,8 @@ static long isNumber(const char* s)
 ////////////////// is_opt //////////////////
 static int is_opt( char* arg, char* opt)
 {
-	if(strcmp(arg, opt) == 0 && printf("opt %s riconosciuto\n", opt) ) return 1;
+	if(strcmp(arg, opt) == 0) return 1;
 	else return 0;
-	//elimina la stampa di opt -> qui solo per debug
 }
 
 
@@ -75,7 +80,7 @@ static int is_directory(const char *path)
 static void case_h()
 {
 	int fd;
-	ec_meno1((fd=open("help.txt", O_RDONLY)), "errore open in case_h");
+	ec_meno1((fd = open("help.txt", O_RDONLY)), "errore open in case_h");
 	
 	struct stat path_stat;
     	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
@@ -122,7 +127,7 @@ static void case_r (char* arg_r)
 	char* token = strtok_r(arg_r, ",", &save);
 	while (token){
 		//su ogni toker che rappresenta il nome del file invio una richiesta di scrittura
-		printf("richiesta di lettura su server di: %s\n", token);
+		printf("richiesta di lettura su: %s\n", token);
 		void **buf;
 		size_t* size;
 		ec_meno1(readFile(token, buf, size), "readFile fallita");
@@ -187,7 +192,6 @@ static int write_request(const char* f_name)
 		ec_meno1(/*openFile(entry->d_name, O_LOCK)*/openFile(f_name, 2), "openFile fallita");
 		//file aperto o creato in mod locked
 		ec_meno1(writeFile(f_name, arg_d), "writeFile error");						
-		printf("WriteFile effettuata\n");
 	}
 	return 0;
 }
@@ -231,7 +235,7 @@ static void visitFolder_sendRequest(const char* dirname, int* n)
 ////////////////// case_h //////////////////
 static void case_w(char* arg_w)
 {
-		//in seguito in dirname salvo la directory contenuta in arg_w
+		//in seguito in dirname salvo la directory estratta da arg_w
 		char* dirname;
 		//verifica arg opzionale 
 		char* n = NULL;
@@ -256,7 +260,7 @@ static void case_w(char* arg_w)
 
 
 ////////////////// case_l //////////////////
-static void case_l(const char* arg_l)
+static void case_l(char* arg_l)
 {
 	char* save = NULL;
 	char* token = strtok_r(arg_l, ",", &save);
@@ -269,7 +273,7 @@ static void case_l(const char* arg_l)
 }
 
 ////////////////// case_u //////////////////
-static void case_u(const char* arg_u)
+static void case_u(char* arg_u)
 {
 	char* save = NULL;
 	char* token = strtok_r(arg_u, ",", &save);
@@ -282,10 +286,10 @@ static void case_u(const char* arg_u)
 }
 
 ////////////////// case_c //////////////////
-static void case_c(const char* arg_c)
+static void case_c(char* arg_c)
 {
 	char* save = NULL;
-	char* token = strtok_r(arg_l, ",", &save);
+	char* token = strtok_r(arg_c, ",", &save);
 	while (token){
 		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
 		printf("richiesta di cancellazione su: %s\n", token);
@@ -294,30 +298,51 @@ static void case_c(const char* arg_c)
 	}
 }
 
+static void set_socket(const char* socket_name)
+{
+	int rec_time = 500; //richiesta di riconnessione ogni 500 millisecondi = 0.5 secondi
+	int time_out = 10; //10 secondi prima di terminare
+
+	struct timespec timer; // struttura che memorizza i sec/ns passati da quando si chiama clock_gettime
+
+	//prelevo l'orario di sistema salvato in ts
+        ec_meno1(clock_gettime(CLOCK_REALTIME, &timer), "clock clock_gettime fallita");
+
+
+        //tempo attuale + time_out
+        timer.tv_sec += time_out;  
+
+        if(openConnection(socket_name, rec_time, timer) == -1){
+        	LOG_ERR(errno, "-f tentativo di connessione non riuscito");
+        }
+}
+
 ////////////////// parser //////////////////
 static void parser(int dim, char** array){
 
-	//il parsing è suddiviso in due cicli (si scandisce argv del main)
-
-	//CICLO 1: si gestiscono i comandi di setting -h, -f, -t, -p, -d, -D
-	
+	//ciclo preliminare per controllare -h e terminare immediatamente se presente
 	int i = 0;
-
 	while (++i < dim){
-		
 		//CASO -h
 		if (is_opt(array[i], "-h")) {
 			case_h();
-			exit(EXIT_FAILURE);
+			exit(0);
 		}
+	}
+	
+	//il parsing è suddiviso in due cicli (si scandisce argv del main)
+	//CICLO 1: si gestiscono i comandi di setting -f, -t, -p, -d, -D
+	i = 0;
+	while (++i < dim){
 		
 		//CASO-f
 		if (is_opt(array[i], "-f")) {
 			//argomento obbligatorio
 			if (is_argument(array[i+1])){ 
-				socket_name = array[++i]; 
+				socket_name = array[++i];
+				set_socket(socket_name);
 			}else{ 
-				LOG_ERR(EINVAL, "argomento -t mancante");
+				LOG_ERR(EINVAL, "argomento -f mancante");
 				exit(EXIT_FAILURE); 
 			}
 		}
@@ -329,7 +354,10 @@ static void parser(int dim, char** array){
 		}	
 
 		//CASO -p
-		if (is_opt(array[i], "-p")) flag_p = 1;
+		if (is_opt(array[i], "-p")){
+			flag_p = 1;
+			i++;
+		}
 
 
 		//CASO -D
@@ -410,12 +438,12 @@ static void parser(int dim, char** array){
 			//caso in cui è presente n
 			if (is_argument(array[i+1])) {
 				size_t x;
-				ec_meno1((x = isNumber(array[++i])), "errore: arg. -w n non intero\n");
-				if (x == 0) ec_meno1(readNfile(-1, arg_d), "readNfile fallita");
-				else ec_meno1(readNfile(x, arg_d), "readNfile fallita");
+				ec_meno1((x = isNumber(array[++i])), "errore: arg. -R n non intero\n");
+				if (x == 0){ ec_meno1(readNFiles(-1, arg_d), "readNFiles fallita"); }
+				else{ ec_meno1(readNFiles(x, arg_d), "readNFiles fallita"); }
 			//caso in cui n non è presente
 			}else{
-				ec_meno1(readNfile(-1, arg_d), "readNfile fallita");
+				ec_meno1(readNFiles(-1, arg_d), "readNFiles fallita");
 			}
 
 		}
