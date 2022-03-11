@@ -1,3 +1,4 @@
+//
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -10,24 +11,22 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <time.h>
 
-#define SUCCES (0)
-#define ERR (-1)
-#define MEMERR (-2)
 
 //macro che permette di stampare gli errori in stderr
-#define ERR_H(error_code, error_msg) \
+#define LOG_ERR(error_code, error_msg) \
 	errno = error_code;	\
 	fprintf(stderr, "%s: %s\n", error_msg, strerror(error_code)); 
 
-//macro che permettono di controllare l'esito di funzioni ed chiamare proc. di cleanup
+//macro controllo ritorno null
 #define ec_null(s, m) \
 	if(s == NULL){ perror(m); exit(EXIT_FAILURE); }
 
-//error clean up
+//macro controllo ritorno -1
 #define ec_meno1(s, m) \
 	if(s == -1){ perror(m); exit(EXIT_FAILURE); }
 
-//con procedura/funzione cleanup
+//macro controllo -1 con procedura di cleanup
 #define ec_meno1_c(s, m, c) \
 	if(s == -1){ perror(m); c; }
