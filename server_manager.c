@@ -1,8 +1,11 @@
+//1. lista dei file aperti
+//2. implementazione cache e inserimento procedure in server-manager
+
 #include "err_control.h"
-#include "util.h"
+#include "function_c.h"
 #include <sys/socket.h>
 #include <sys/un.h>
-
+#define UNIX_PATH_MAX 108
 
 //var. settate mediante file config.txt (!) aggiorna
 int t_workers_num = 0;
@@ -10,24 +13,21 @@ int server_mem_size = 0;
 int server_file_size = 0;
 char* socket_addr = NULL;
 
-#define UNIX_PATH_MAX 108
-
 //flags segnali di teminazione 
 //SIGINT/SIGQUIT: uscita prima possibile. non si accettano richieste, chiudere connessioni attive
 //SIG_HUP: non si accettano nuove connessioni e si termina una volta esaurite quelle attive
 volatile sig_atomic_t sig_intquit = 0;
 volatile sig_atomic_t sig_hup = 0;
 
-
-
 //prototipi di funzione
 void read_config_file(char* f_name);
 
 
-static void handler(int signum){
+//handler_sigintquit
+static void handler_sigintquit(int signum){
 	flag_sig_intquit = 1;
-	//goto cleanup_section
-	_exit(EXIT_FAILURE);
+	goto cleanup_section
+	
 }
 
 int main(int argc, char* argv[])
@@ -36,57 +36,56 @@ int main(int argc, char* argv[])
 	int err;
 	//controllo argomenti main
 	if (argc <= 1){
-		LOG_ERR(EINVAL, "file config.txt mancante");
+		LOG_ERR(EINVAL, "server_manager: file config.txt mancante");
 		exit(EXIT_FAILURE);
 	}
 	
-	//parsing del file config.txt
+	//PARSING config.txt
 	if (read_config_file(argv[1]) != 0){
-		LOG_ERR(-1, "lettura file configurazione fallita");
+		LOG_ERR(-1, "server_manager: lettura file configurazione fallita");
 		exit(EXIT_FAILURE);
 	}
-	//segnali SIGINT e SIGQUIT
+
+	//SEGNALI 
 	struct sigaction s;
 	memset(&s, 0, sizeof(s));
-	s.sa_handler = handler;
-	ec_meno1(sigaction(SIGINT, &s, NULL), "sigaction fallita");
+	s.sa_handler = handler_sigintquit;
+	ec_meno1(sigaction(SIGINT, &s, NULL), "server_manager: sigaction fallita");
 
 	struct sigaction s1;
 	memset(&s, 0, sizeof(s1));
-	s1.sa_handler = handler;
-	ec_meno1(sigaction(SIGQUIT, &s1, NULL), "sigaction fallita");
+	s1.sa_handler = handler_sigintquit;
+	ec_meno1(sigaction(SIGQUIT, &s1, NULL), "server_manager: sigaction fallita");
 	
-	//segnale SIGHUP	
 	struct sigaction s2;
 	memset(&s, 0, sizeof(s2));
-	s2.sa_handler = handler2;
-	ec_meno1(sigaction(SIGQUIT, &s2, NULL), "sigaction fallita");
+	s2.sa_handler = handler_sighup;
+	ec_meno1(sigaction(SIGQUIT, &s2, NULL), "server_manager: sigaction fallita");
 	
 
 	//STRUTTURE DATI
+	/*********** buf lettura ***********/
+	int buf;
 
-	//buffer di lettura -> che dimensione ha?
-	int N = 256;
-	char buf[N];
-
-	//coda FIFO concorrente per comunicazione M -> Ws
+	/*********** coda FIFO concorrente ***********/
 	t_queue conc_queue = NULL;
 	//if(conc_queue == NULL){ LOG_ERR(-1, "creazione coda conc. fallita"); exit(EXIT_FAILURE); }
 
-	//pipe senza nome per comunicazione Ws -> M
+	/*********** pipe senza nome ***********/
 	int pfd[2];
 	int fd_pipe_read = pfd[0];
 	int fd_pipe_write = pfd[1];
-	ec_meno1(pipe(pfd), "creazione pipe fallita");
+	ec_meno1(pipe(pfd), "server_manager: creazione pipe fallita");
 
-	//pool di thread Ws
+	/*********** thread pool ***********/
 	pthread_t thread_workers_arr[t_workers_num];
 	for(int i = 0; i < t_workers_num; i++){
-		if (err = pthread_create(&(thread_workers_arr[i]), NULL, worker_func, NULL) != 0){    
+		if (err = pthread_create(&(thread_workers_arr[i]), NULL, start_func, NULL) != 0){    
+			LOG_ERR(err, "server_manager: pthread_create faallita");
 			exit(EXIT_FAILURE);
 	}
 
-	//listen socket
+	/*********** listen socket ***********/
 	struct sockaddr_un sa;
 	strncpy(sa.sun_path, socket_addr, UNIX_PATH_MAX);
 	sa.sun_family = AF_UNIX;
@@ -96,9 +95,9 @@ int main(int argc, char* argv[])
 	fd_set set;		//insieme fd attivi
 	fd_set rdset;		//insieme fd attesi in lettura
 	//creazione listen socket
-	ec_meno1(fd_skt = socket(AF_UNIX, SOCK_STREAM, 0), "server socket() fallita");
-	ec_meno1(bind(fd_skt, (struct sockaddr_un*)sa, sizeof(*sa)), "bind() fallita");
-	ec_meno1(listen(fd_skt, SOMAXCONN), "listen() fallita");
+	ec_meno1(fd_skt = socket(AF_UNIX, SOCK_STREAM, 0), "server_manager: server socket() fallita");
+	ec_meno1(bind(fd_skt, (struct sockaddr_un*)sa, sizeof(*sa)), "server_manager: bind() fallita");
+	ec_meno1(listen(fd_skt, SOMAXCONN), "server_manager: listen() fallita");
 	//aggiornamento fd_num
 	if (fd_skt > fd_num) fd_num = fd_skt;
 	//inizializzazione e aggiornamento maschera
@@ -106,46 +105,55 @@ int main(int argc, char* argv[])
 	FD_SET(fd_skt, &set);
 
 
-	//guardia del while da definire con controlli di terminazione signal
-	while(!sig_intquit || !sig_hup){
+	/*********** loop ***********/
+	while(!sig_intquit && !sig_hup){
 		rdset = set;
 		if (select(fd_num+1, &rdset, NULL, NULL, NULL) == -1){
-			LOG_ERR(-1, "select fallita");
-			exit(EXIT_FAILURE);
+			LOG_ERR(-1, "server_manager: select fallita");
+			goto cleanup_section;
 		}else{
-			//scorre tra gli fd da testare
 			for (fd = 0; fd <= fd_num; fd++){
-				if (FD_ISSET(fd, &rdset)){ //trovato un fd pronto
-					
+				if (FD_ISSET(fd, &rdset)){
 					//caso 1: si tratta del fd_skt (socket connect)
 					if (fd == fd_skt){ 
-						//stabilisci connessione con client (sovrascrive fd_c)
+						//stabilisci connessione con un client
 						if ((fd_c = accept(fd_skt, NULL, 0)) == -1){
-							LOG_ERR(-1, "accept fallita");
-							exit(EXIT_FAILURE);
+							LOG_ERR(-1, "server_manager: accept fallita");
+							goto cleanup_section;
 						} 
-						fd_set(fd_c, &set);
+						FD_SET(fd_c, &set);
 						if (fd_c > fd_num) fd_num = fd_c;
-					
-					if(fd == pfd)
-					//controllo file descriptor file in pipe
-					//un worker mi manda un messaggio
-					//1. richiesta che non puo essere soddisfatta dal server (errore client) -> richiesta servita
-					//2. client disconnesso ho letto 0, -fd chiama cleanup
-					//3. errore fatale
-
-					//se il fd pronto è un socket di I/O con client gia connesso
-					}else{	
-						nread = read(fd, buf, N);
-						//EOF client
-						if (nread == 0){	
+					}else{ 
+						//caso 2: si tratta del fd della pipe -> un thread ha un messaggio
+						if (fd == fd_pipe_read){
+							//leggo pipe
+							if((err = readn(fd_pipe_read, buf, sizeof(int)) == -1){
+								LOG_ERR(err, "server_manager: file_manager: readn fallita");
+								goto cleanup_section;
+							}
+							//richiesta servita -> thread ritorna fd
+							if( buf == fd ) FD_SET(buf, &set);
+							//client disconnesso (readn legge 0) -> thread ritorna -fd
+							if(buf < 0){
+								buf = buf*(-1);
+								FD_CLR(buf, &set);
+								close(fd);
+							}
+						//caso 3: si serve una richiesta di un client connesso
+						}else{	
+							//nel buffer si trova la richiesta 
+							//va codificata cosi che tutti possano interpretarla
+							if((nread = readn(fd, buf, sizeof(int)) == -1){
+								LOG_ERR(err, "server_manager: readn fallita");
+								goto cleanup_section;
+							}
+							enqueue(conc_queue, buf);
 							FD_CLR(fd, &set);
-							fd_num = aggiorna(&set);
-							close(fd);
-						//nel buffer si trova la richiesta che il server ha inviato
-
-					}
-				}
+							fd_num--;
+							close(fd);			
+						}
+					}	
+				}		
 			}
 
 		}
@@ -206,3 +214,30 @@ void read_config_file(char* f_name)
 	}
 	return 0;
 }
+
+
+//chiusura server
+for (i=0; i < t_workers_num; i++) {      // joining worker threads
+	if ((err = pthread_join(thread_workers_arr[i], NULL))==ERR){
+        	LOG_ERR(err, "server_manager: pthread_join fallita");
+           	goto cleanup_section;
+        }
+}
+
+if(queue) dealloc_queue(queue);
+close(fd_pipe_read);
+close(fd_pipe_write);
+close(fd_sk);
+exit();
+
+
+
+//cleanup_section
+cleanup_section:
+
+if(queue) dealloc_queue(queue);
+close(fd_pipe_read);
+close(fd_pipe_write);
+exit(EXIT_FAILURE);
+
+
