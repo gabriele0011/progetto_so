@@ -1,9 +1,8 @@
-#include "err_cleanup.h"
+#include "err_control.h"
 #include "util.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 
-int err;
 
 //var. settate mediante file config.txt (!) aggiorna
 int t_workers_num = 0;
@@ -16,17 +15,25 @@ char* socket_addr = NULL;
 //flags segnali di teminazione 
 //SIGINT/SIGQUIT: uscita prima possibile. non si accettano richieste, chiudere connessioni attive
 //SIG_HUP: non si accettano nuove connessioni e si termina una volta esaurite quelle attive
-int flag_sig_intquit = 0;
-int flag_sig_hup = 0;
+volatile sig_atomic_t sig_intquit = 0;
+volatile sig_atomic_t sig_hup = 0;
+
+
 
 //prototipi di funzione
 void read_config_file(char* f_name);
 
 
+static void handler(int signum){
+	flag_sig_intquit = 1;
+	//goto cleanup_section
+	_exit(EXIT_FAILURE);
+}
 
 int main(int argc, char* argv[])
 {
 
+	int err;
 	//controllo argomenti main
 	if (argc <= 1){
 		LOG_ERR(EINVAL, "file config.txt mancante");
@@ -38,7 +45,23 @@ int main(int argc, char* argv[])
 		LOG_ERR(-1, "lettura file configurazione fallita");
 		exit(EXIT_FAILURE);
 	}
+	//segnali SIGINT e SIGQUIT
+	struct sigaction s;
+	memset(&s, 0, sizeof(s));
+	s.sa_handler = handler;
+	ec_meno1(sigaction(SIGINT, &s, NULL), "sigaction fallita");
 
+	struct sigaction s1;
+	memset(&s, 0, sizeof(s1));
+	s1.sa_handler = handler;
+	ec_meno1(sigaction(SIGQUIT, &s1, NULL), "sigaction fallita");
+	
+	//segnale SIGHUP	
+	struct sigaction s2;
+	memset(&s, 0, sizeof(s2));
+	s2.sa_handler = handler2;
+	ec_meno1(sigaction(SIGQUIT, &s2, NULL), "sigaction fallita");
+	
 
 	//STRUTTURE DATI
 
@@ -47,7 +70,7 @@ int main(int argc, char* argv[])
 	char buf[N];
 
 	//coda FIFO concorrente per comunicazione M -> Ws
-	t_queue conc_queue;
+	t_queue conc_queue = NULL;
 	//if(conc_queue == NULL){ LOG_ERR(-1, "creazione coda conc. fallita"); exit(EXIT_FAILURE); }
 
 	//pipe senza nome per comunicazione Ws -> M
@@ -59,8 +82,7 @@ int main(int argc, char* argv[])
 	//pool di thread Ws
 	pthread_t thread_workers_arr[t_workers_num];
 	for(int i = 0; i < t_workers_num; i++){
-		if (err = pthread_create(&(thread_workers_arr[i]), NULL, worker_func, NULL) != 0){    //worker_func?
-			LOG_ERR(err, "pthread_create fallita");
+		if (err = pthread_create(&(thread_workers_arr[i]), NULL, worker_func, NULL) != 0){    
 			exit(EXIT_FAILURE);
 	}
 
@@ -85,7 +107,7 @@ int main(int argc, char* argv[])
 
 
 	//guardia del while da definire con controlli di terminazione signal
-	while(1){
+	while(!sig_intquit || !sig_hup){
 		rdset = set;
 		if (select(fd_num+1, &rdset, NULL, NULL, NULL) == -1){
 			LOG_ERR(-1, "select fallita");
@@ -95,16 +117,22 @@ int main(int argc, char* argv[])
 			for (fd = 0; fd <= fd_num; fd++){
 				if (FD_ISSET(fd, &rdset)){ //trovato un fd pronto
 					
-					//si tratta del fd_skt (socket connect)
+					//caso 1: si tratta del fd_skt (socket connect)
 					if (fd == fd_skt){ 
-						//si, stabilisci connessione con client (sovrascrive fd_c)
+						//stabilisci connessione con client (sovrascrive fd_c)
 						if ((fd_c = accept(fd_skt, NULL, 0)) == -1){
 							LOG_ERR(-1, "accept fallita");
 							exit(EXIT_FAILURE);
 						} 
 						fd_set(fd_c, &set);
 						if (fd_c > fd_num) fd_num = fd_c;
-
+					
+					if(fd == pfd)
+					//controllo file descriptor file in pipe
+					//un worker mi manda un messaggio
+					//1. richiesta che non puo essere soddisfatta dal server (errore client) -> richiesta servita
+					//2. client disconnesso ho letto 0, -fd chiama cleanup
+					//3. errore fatale
 
 					//se il fd pronto è un socket di I/O con client gia connesso
 					}else{	
@@ -114,19 +142,14 @@ int main(int argc, char* argv[])
 							FD_CLR(fd, &set);
 							fd_num = aggiorna(&set);
 							close(fd);
+						//nel buffer si trova la richiesta che il server ha inviato
 
-						//socket di I/O attivo -> si puo comunicare	
-						}else{
-							printf("server got: %s\n", buf);
-							write(fd, "bye\n", 5);
-						}
 					}
 				}
 			}
 
 		}
 	}
-
 	return 0;
 }
 
