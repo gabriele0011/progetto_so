@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-
+#include "err_control.h"
 //tipo nodo coda
 typedef struct nodo {
 	int data;
@@ -13,9 +13,9 @@ typedef struct nodo {
 pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
 //prototipi di funzione
-t_queue* init_queue(t_queue* root, int data);
+//t_queue* init_queue(t_queue* root, int data);
 t_queue* enqueue(t_queue* head, int data);
-t_queue* dequeue(t_queue* queue);
+t_queue* dequeue(t_queue* queue, int* data_eject);
 int queueIsEmpty(t_queue* queue);
 
 /*
@@ -29,7 +29,8 @@ t_queue* create_queue(t_queue* root, int data)
 t_queue* enqueue(t_queue* queue, int data)
 {
 	//creazione nodo
-	t_queue* new = ec_null(malloc(sizeof(t_queue)), "malloc enqueue fallita");
+	t_queue* new;
+	ec_null((new = malloc(sizeof(t_queue))), "malloc enqueue fallita");
 	new->data = data;
 
 	//posizionamento nodo
@@ -63,19 +64,21 @@ t_queue* enqueue(t_queue* queue, int data)
 }
 
 //elimina coda -> restitire il dato del nodo cancellato
-t_queue* dequeue(t_queue* queue)
+t_queue* dequeue(t_queue* queue, int* data_eject)
 {
-	t_queue* temp = queue;
 
 	//caso 0: coda vuota
 	if(queueIsEmpty(queue)) return NULL;
 
-	if(pthread_mutex_lock(&mtx) != 0){
-			LOG_ERR(errno, "lock fallita in dequeue");
-			exit(EXIT_FAILURE);
-	}
+
+	t_queue* temp = queue;
 	//caso 1: un elemento in coda -> testa = coda
 	if(temp->next == NULL){
+		if(pthread_mutex_lock(&mtx) != 0){
+			LOG_ERR(errno, "lock fallita in dequeue");
+			exit(EXIT_FAILURE);
+		}
+		*data_eject = queue->data;
 		queue = NULL;
 		free(temp);
 		if(pthread_mutex_unlock(&mtx) != 0){
@@ -95,6 +98,7 @@ t_queue* dequeue(t_queue* queue)
 	}
 	t_queue* del = temp->next;
 	temp->next = NULL;
+	*data_eject = del->data;
 	free(del);
 	if(pthread_mutex_unlock(&mtx) != 0){
 		LOG_ERR(errno, "unlock fallita in dequeue");
@@ -120,31 +124,46 @@ void printf_queue(t_queue* queue)
 }	
 
 //funzioni di deallocazione coda
-void dealloc_queue(t_queue queue)
+void dealloc_queue(t_queue* queue)
 {
+	//coda vuota
+	if(queue == NULL) return;
+	//coda non vuota
 	while(queue != NULL){
-		t_queue temp = queue;
+		t_queue* temp = queue;
 		queue = queue->next;
 		free(temp);
 	}
 }
 
 
+//TEST
 
-/*
+t_queue* init_queue(t_queue* queue){
+	int n;
+	while(scanf("%d", &n) && n != 0){
+		queue = enqueue(queue, n);
+	}
+	return queue;
+}
+
 
 //main test
 int main(){
 
 	t_queue* queue = NULL;
-	queue = create_queue(queue, 5);
-	queue = enqueue(queue, 7);
-	queue = enqueue(queue, 7);
-	queue = dequeue(queue);
-
-
+	queue = init_queue(queue);
+	int data_eject;
+	printf("init queue:\n");
 	printf_queue(queue);
+	
+	queue = dequeue(queue, &data_eject);
+	printf("dequeue queue:\n");
+	printf_queue(queue);
+	printf("data_eject = %d\n", data_eject);
+
+	dealloc_queue(queue);
+	if(!queue)printf_queue(queue);
 	return 0;
 }
-*/
 
