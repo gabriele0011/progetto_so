@@ -2,28 +2,29 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-
+//tipo nodo coda
 typedef struct nodo {
 	int data;
 	struct nodo* next;
 }t_queue;
 
-pthread_mutex_t head = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t tail = PTHREAD_MUTEX_INITIALIZER;
 
+//mutex
+pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
+//prototipi di funzione
 t_queue* init_queue(t_queue* root, int data);
 t_queue* enqueue(t_queue* head, int data);
 t_queue* dequeue(t_queue* queue);
 int queueIsEmpty(t_queue* queue);
 
-
+/*
 t_queue* create_queue(t_queue* root, int data)
 {
 	root = enqueue(root, data);
 	return root;
 }
-
+*/
 
 t_queue* enqueue(t_queue* queue, int data)
 {
@@ -35,25 +36,25 @@ t_queue* enqueue(t_queue* queue, int data)
 	
 	//caso 1 - coda vuota -> nuova testa = coda
 	if (queue == NULL){
-		if(pthread_mutex_lock(&head) != 0){ 
+		if (pthread_mutex_lock(&mtx) != 0){ 
 			LOG_ERR(errno, "lock fallita in enqueue");
 			exit(EXIT_FAILURE);
 		}
 		new->next = NULL;
 		queue = new;
-		if(pthread_mutex_unlock(&head) != 0){
+		if (pthread_mutex_unlock(&mtx) != 0){
 			LOG_ERR(errno, "unlock fallita in enqueue");
 			exit(EXIT_FAILURE);
 		}
 	//caso 2 - nuova testa
 	}else{
-		if(pthread_mutex_lock(&head) != 0){
+		if (pthread_mutex_lock(&mtx) != 0){
 			LOG_ERR(errno, "lock fallita in enqueue");
 			exit(EXIT_FAILURE);
 		}
 		new->next = queue;
 		queue = new;
-		if(pthread_mutex_unlock(&head) != 0){
+		if (pthread_mutex_unlock(&mtx) != 0){
 			LOG_ERR(errno, "lock fallita in enqueue");
 			exit(EXIT_FAILURE);
 		};
@@ -61,7 +62,7 @@ t_queue* enqueue(t_queue* queue, int data)
 	return queue;
 }
 
-//elimina coda
+//elimina coda -> restitire il dato del nodo cancellato
 t_queue* dequeue(t_queue* queue)
 {
 	t_queue* temp = queue;
@@ -69,7 +70,7 @@ t_queue* dequeue(t_queue* queue)
 	//caso 0: coda vuota
 	if(queueIsEmpty(queue)) return NULL;
 
-	if(pthread_mutex_lock(&tail) != 0){
+	if(pthread_mutex_lock(&mtx) != 0){
 			LOG_ERR(errno, "lock fallita in dequeue");
 			exit(EXIT_FAILURE);
 	}
@@ -77,13 +78,13 @@ t_queue* dequeue(t_queue* queue)
 	if(temp->next == NULL){
 		queue = NULL;
 		free(temp);
-		if(pthread_mutex_unlock(&tail) != 0){
+		if(pthread_mutex_unlock(&mtx) != 0){
 			LOG_ERR(errno, "lock fallita in dequeue");
 			exit(EXIT_FAILURE);
 		}
 		return queue;
 	}
-	if(pthread_mutex_lock(&tail) != 0){
+	if(pthread_mutex_lock(&mtx) != 0){
 		LOG_ERR(errno, "lock fallita in dequeue");
 		exit(EXIT_FAILURE);
 	}
@@ -95,12 +96,12 @@ t_queue* dequeue(t_queue* queue)
 	t_queue* del = temp->next;
 	temp->next = NULL;
 	free(del);
-	if(pthread_mutex_unlock(&tail) != 0){
+	if(pthread_mutex_unlock(&mtx) != 0){
 		LOG_ERR(errno, "unlock fallita in dequeue");
 		exit(EXIT_FAILURE);
 	}
 	return queue;
-}	
+}
 
 //controllo coda vuota
 int queueIsEmpty(t_queue* queue)
@@ -117,6 +118,18 @@ void printf_queue(t_queue* queue)
 	}
 	printf("\n");
 }	
+
+//funzioni di deallocazione coda
+void dealloc_queue(t_queue queue)
+{
+	while(queue != NULL){
+		t_queue temp = queue;
+		queue = queue->next;
+		free(temp);
+	}
+}
+
+
 
 /*
 
