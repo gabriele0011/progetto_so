@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include "err_control.h"
+
 //tipo nodo coda
 typedef struct nodo {
 	int data;
@@ -18,13 +19,6 @@ t_queue* enqueue(t_queue* head, int data);
 t_queue* dequeue(t_queue* queue, int* data_eject);
 int queueIsEmpty(t_queue* queue);
 
-/*
-t_queue* create_queue(t_queue* root, int data)
-{
-	root = enqueue(root, data);
-	return root;
-}
-*/
 
 t_queue* enqueue(t_queue* queue, int data)
 {
@@ -138,7 +132,7 @@ void dealloc_queue(t_queue* queue)
 
 
 //TEST
-
+/*
 t_queue* init_queue(t_queue* queue){
 	int n;
 	while(scanf("%d", &n) && n != 0){
@@ -166,4 +160,4 @@ int main(){
 	if(!queue)printf_queue(queue);
 	return 0;
 }
-
+*/
