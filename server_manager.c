@@ -12,9 +12,9 @@
 
 /*********** coda FIFO concorrente ***********/
 //tipo nodo coda
-typedef struct nodo {
+typedef struct node {
 	int data;
-	struct nodo* next;
+	struct node* next;
 }t_queue;
 
 //mutex
@@ -132,6 +132,12 @@ void dealloc_queue(t_queue* queue)
 	}
 }
 
+//var. settate mediante file config.txt
+int t_workers_num = 0;
+int server_mem_size = 0;
+int max_storage_file = 0;
+char* socket_file_name = NULL;
+
 /*********** read_config_file ***********/
 int read_config_file(char* f_name)
 {
@@ -143,59 +149,70 @@ int read_config_file(char* f_name)
     	//allocazione buf[size] per memorizzare le righe del file
     	int len = 256;
     	char s[len];
+	int n = 0;
 
     	//acquisizione delle singole righe del file, mi aspetto in ordine:
-    	//t_workers_num, server_mem_size, socket_file_name ,server_size_file;	
+    	//t_workers_num, server_mem_size, max_storage_file , socket_file_name;
 	while( (fgets(s, len, fd)) != NULL ){			
-		
+		printf("n = %d\n", n);
 		char* token2 = NULL;
 		char* token1 = strtok_r(s, ":", &token2);
-
-		//string che prende token2 ovvero il valore da assegnare alle variabili
-		int len_string = strlen(token2)-1; //si esclude '\n'
-		char* string;
-		string = calloc(sizeof(char), len_string);
-		string[len_string] = '\0';
-		strncpy(string, token2, len_string);
 		
-		//printf("string: %s len_string = %d\n", string, len_string);
-
 		int len_t = strlen(token1);
-		if (strncmp(token1, "server_file_size", len_t) == 0)
-			ec_meno1((server_file_size = isNumber(string)), "parametro server_file_size config.txt non valido");
 
-		if (strncmp(token1, "t_workers_num", len_t) == 0 )
-			ec_meno1((t_workers_num = isNumber(string)), "parametro t_workers_num config.txt non valido");
-
-
-		if (strncmp(token1, "server_mem_size", len_t) == 0)
-			ec_meno1((server_mem_size = isNumber(string)), "parametro server_mem_size config.txt non valido");
+		//prime tre acquisizioni
+		if(n < 3){
+			int len_string = strlen(token2);
+			len_string--;			 //lunghezza reale stringa
+			token2[len_string] = '\0';	 //sovrascrivo carattere di terminazione \n acquisito dal file
 		
-		if (strncmp(token1, "socket_addr", len_t) == 0 ){
-			socket_addr = calloc(sizeof(char), len_string);
-			strncpy(socket_addr, string, len_string);
-			socket_addr[len_string] = '\0';
+			//copio token2 in string
+			char* string;
+			string = calloc(sizeof(char), len_string);
+			string[len_string] = '\0';
+			strncpy(string, token2, len_string);
+		
+			if (strncmp(token1, "t_workers_num", len_t) == 0 )
+				ec_meno1((t_workers_num = isNumber(string)), "parametro t_workers_num config.txt non valido");
+
+			if (strncmp(token1, "server_mem_size", len_t) == 0)
+				ec_meno1((server_mem_size = isNumber(string)), "parametro server_mem_size config.txt non valido");
+
+			if (strncmp(token1, "max_storage_file", len_t) == 0)
+				ec_meno1((max_storage_file = isNumber(string)), "parametro max_storage_file config.txt non valido");
 		}
+		//quarta e ultima acquisizione non ha '\n'
+		if (strncmp(token1, "socket_file_name", len_t) == 0 ){
+			int len_token2 = strlen(token2);
+			socket_file_name = calloc(sizeof(char), len_token2);
+			strncpy(socket_file_name, token2, len_token2);
+			//socket_file_name[len_string] = '\0';
+		}
+		n++;
 	}
 	return 0;
 }
 
-//var. settate mediante file config.txt (!) aggiorna
-int t_workers_num = 0;
-int server_mem_size = 0;
-int server_file_size = 0;
-char* socket_addr = NULL;
 
 //flags segnali di teminazione
 volatile sig_atomic_t sig_intquit = 0;	//SIGINT/SIGQUIT: uscita immediata - non si accettano richieste - chiudere connessioni attive
-volatile sig_atomic_t sig_hup = 0; 	//SIG_HUP: non si accettano nuove connessioni - si termina una volta concluse quelle attive
+volatile sig_atomic_t sig_hup = 0; 		//SIG_HUP: non si accettano nuove connessioni - si termina una volta concluse quelle attive
 
 //handlers segnali di terminazione
 static void handler_sigintquit(int signum){
 	sig_intquit = 1;
 }
+
 static void handler_sighup(int signum){
 	sig_hup = 1;
+}
+
+int x;
+static void* start_func(void* arg){
+	printf("ciao\n");
+	while(1){ 
+		//printf("x = %d\n\n", ++x); 
+	}
 }
 
 //MAIN
@@ -232,6 +249,9 @@ int main(int argc, char* argv[])
 	ec_meno1(sigaction(SIGQUIT, &s2, NULL), "server_manager: sigaction fallita");
 	
 
+	//CACHE
+	//file* create_cache(server_mem_size, max_storage_file);
+
 	//STRUTTURE DATI
 	/*********** buf lettura ***********/
 	int buf;
@@ -249,7 +269,7 @@ int main(int argc, char* argv[])
 	/*********** thread pool ***********/
 	pthread_t thread_workers_arr[t_workers_num];
 	for(int i = 0; i < t_workers_num; i++){
-		if ((err = pthread_create(&(thread_workers_arr[i]), NULL, start_func, NULL)) != 0){    
+		if ((err = pthread_create(&(thread_workers_arr[i]), NULL, &start_func, NULL)) != 0){    
 			LOG_ERR(err, "server_manager: pthread_create faallita");
 			exit(EXIT_FAILURE);
 		}
@@ -257,13 +277,15 @@ int main(int argc, char* argv[])
 
 	/*********** listen socket ***********/
 	struct sockaddr_un sa;
-	strcpy(sa.sun_path, socket_addr);
+	strcpy(sa.sun_path, socket_file_name);
 	sa.sun_family = AF_UNIX;
+	printf("fino a qui tutto bene\n");
 	//dichiarazioni fd
 	int fd_skt, fd_c;	//fd socket e client
 	int fd_num;		//num. max fd attivi
 	fd_set set;		//insieme fd attivi
 	fd_set rdset;		//insieme fd attesi in lettura
+	printf("socket address: %s\n", socket_file_name);
 	//creazione listen socket
 	ec_meno1((fd_skt = socket(AF_UNIX, SOCK_STREAM, 0)), "server_manager: server socket() fallita");
 	ec_meno1(bind(fd_skt, (struct sockaddr*)&sa, sizeof(sa)), "server_manager: bind() fallita");
@@ -274,50 +296,57 @@ int main(int argc, char* argv[])
 	FD_ZERO(&set);		
 	FD_SET(fd_skt, &set);
 
+	printf("Server socket fd: %d\n", fd_skt);
+    	printf("Pipe read fd: %d\n", fd_pipe_read);
+    	printf("Pipe write fd: %d\n\n", fd_pipe_write);
 
-	/*********** loop ***********/
-	while (!sig_intquit && !sig_hup){
+   	int n_client_conn = 0;
+
+	while (!sig_intquit){
 		rdset = set;
+		//intercetta fd pronti
 		if (select(fd_num+1, &rdset, NULL, NULL, NULL) == -1){
 			LOG_ERR(-1, "server_manager: select fallita");
-			goto cleanup_section;
+			break;
 		}else{
+			//controlla fd intercettati da select
 			for (int fd = 0; fd <= fd_num; fd++){
 				if (FD_ISSET(fd, &rdset)){
-					//caso 1: si tratta del fd_skt (socket connect)
+					
+					//caso 1: si tratta del fd_skt
 					if (fd == fd_skt){ 
-						//stabilisci connessione con un client
-						if ((fd_c = accept(fd_skt, NULL, 0)) == -1){
-							LOG_ERR(-1, "server_manager: accept fallita");
-							goto cleanup_section;
-						} 
-						FD_SET(fd_c, &set);
-						if (fd_c > fd_num) fd_num = fd_c;
+						//CONTROLLO SEGNALE sig_hup
+						if (!sig_hup && n_client_conn != 0){
+							//stabilisci connessione con un client
+							if ((fd_c = accept(fd_skt, NULL, 0)) == -1){
+								LOG_ERR(-1, "server_manager: accept fallita");
+								break;
+							} 
+							FD_SET(fd_c, &set);
+							if (fd_c > fd_num) fd_num = fd_c;
+						}
 					}else{ 
+							
 						//caso 2: si tratta del fd della pipe -> un thread ha un messaggio
 						if (fd == fd_pipe_read){
-							//leggo pipe
 							if(read(fd_pipe_read, &buf, sizeof(int)) == -1){
 								LOG_ERR(err, "server_manager: file_manager: readn fallita");
-								goto cleanup_section;
+								break;
 							}
 							//richiesta servita -> thread ritorna fd
 							if( buf == fd ) FD_SET(buf, &set);
-							//client disconnesso (readn legge 0) -> thread ritorna -fd
-							if(buf < 0){
+							//client disconnesso (read legge 0) -> thread ritorna -fd
+							if(buf <= 0){
 								buf = buf*(-1);
 								FD_CLR(buf, &set);
 								close(fd);
+								n_client_conn--;
 							}
-						//caso 3: si serve una richiesta di un client connesso
+							
+						//caso 3: inserisce fd client (connesso)in coda concorrente -> nuova richiesta
 						}else{	
-							//nel buffer si trova la richiesta 
-							//va codificata cosi che tutti possano interpretarla
-							if(read(fd, &buf, sizeof(int)) == -1){
-								LOG_ERR(err, "server_manager: readn fallita");
-								goto cleanup_section;
-							}
-							conc_queue = enqueue(conc_queue, buf);
+							conc_queue = enqueue(conc_queue, fd);
+							n_client_conn++;
 							FD_CLR(fd, &set);
 							fd_num--;
 							close(fd);
@@ -327,13 +356,11 @@ int main(int argc, char* argv[])
 			}
 		}
 	}
-	
 	/*********** chiusura server ***********/
-	for (int i=0; i < t_workers_num; i++) {      // joining worker threads
-		if (pthread_join(thread_workers_arr[i], NULL) == -1){
+	for (int i = 0; i < t_workers_num; i++) {
+		if ((err = pthread_join(thread_workers_arr[i], NULL)) == -1){
         		LOG_ERR(err, "server_manager: pthread_join fallita");
-           		goto cleanup_section;
-      		}
+      	}
 	}
 
 	//cleanup chiusura server
@@ -342,8 +369,6 @@ int main(int argc, char* argv[])
 	close(fd_pipe_write);
 	close(fd_skt);
 	exit(0);
-
-
 
 	//cleanup_section
 	cleanup_section:
