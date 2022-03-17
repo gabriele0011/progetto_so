@@ -1,1 +1,1 @@
-# progetto_so
+# progetto_so - Gabriele Cristofaro - MAT. 567757
