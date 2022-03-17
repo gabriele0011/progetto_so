@@ -24,73 +24,12 @@ typedef struct _file
 
 //prototipi
 void create_cache(int mem_size, int max_file_in_cache);
+int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname);
+int cache_capacity_control(int dim_file);
+int cache_duplicate_control(file* cache, char* f_name);
 
 
-
-//funzionamento: cerca un nodo la cui f_size sia >= dimf per poter effettuare il rimpiazzo del file
-//partendo dalla coda poiché si adotta lo schema FIFO
-//caso peggiore O(n), caso migliore O(1)
-file* replacement_algorithm(file* cache, char* f_name, size_t dim_f, char* dirname)
-{
-	file* temp = cache;
-
-	while(temp->f_size >= dim_f && temp->next != NULL){
-		temp = temp->next;
-	}
-
-	//controllo terminazione
-	if(temp->next == NULL && temp->f_size >= dim_f ){
-		printf("rimpiazzo impossibile\n");
-		return NULL;
-	}else{
-		pthread_mutex_lock(&(temp->mtx));
-		//si procede con il rimpiazzo -> il file in temp viene sostituito ma va prima scritto in dirname se != NULL;
-		if (temp->f_size >= dim_f){
-			//salvo nome file da espellere
-			char* rep_file;
-			size_t len = stelen(rep_file);
-			strcpy(rep_file, temp->f_name);
-			
-			//scrittura del file espulso in dirname
-			if (dirname != NULL){
-				//se non esiste, creare directory per scrittura file
-				if (mkdir(dirname,  S_IRWXU | S_IRWXG | S_IRWXO) == -1) {
-					LOG_ERR(errno, "cache replacement_algorithm:");
-				}
-				//mi sposto nella cartella e scrivo il file
-				chdir(s);	
-				FILE* fd;
-				ec_null(fd = fopen(dirname, "wr"), "cache: fopen fallita in replacement_algorithm");
-				ec_meno1(fwrite(rep_file, sizeof(char), rep_len, fd), "cache: fwrite fallita in replacement_algorithm");
-				fclose(fd);
-				//torno alla directory di partenza
-				chdir("../");				
-			}
-			cache_capacity_update(dim_f);
-			/*
-			//setting parametri
-			temp->f_size = dim_f;
-			strcpy(temp->f_name, rep_file); 
-			
-			//ripulisce il buffer e riscrive
-			free(temp->f_data);
-			ec_null((temp->f_data = calloc(sizeof(byte), f_size)), "cache: calloc cache_writeFile fallita");
-			for (int i = 0; i < f_size; i++){
-				temp->f_data[i] = f_data[i];
-			}
-			*/
-		}
-		pthread_mutex_unlock(&(temp->mtx));
-
-	}
-	return temp;
-}	
-
-
-
-
-
-//inizializzare la cache
+//inizializza cache
 void create_cache(int mem_size, int max_file_in_cache)
 {
 	cache_capacity = mem_size;
@@ -98,19 +37,64 @@ void create_cache(int mem_size, int max_file_in_cache)
 	used_mem = 0;
 }
 
+//scrittura di un file in cache (usa enqueue)
+int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
+{	
 
-//controllo della capacità rispetto ad un nuovo file che deve essere scritto
-//se si sfora è necessario un rimpiazzo prima della scrittura
+	pthread_mutex_lock(&(*cache->mtx));
+	*cache->lock = 1;
+	//controllo capienza cache pre-scrittura
+	if(cache_capacity_control(dim_f) == -1){
+
+		char* file_rep;//serve memorizzare il file espulso?
+		
+		//CASO 1: capienza non è sufficiente -> si tenta il rimpiazzo
+		file* node_rep;
+		if((node_rep = replacement_algorithm(cache, f_name, dim_f, dirname)) == NULL){
+			fprintf(stderr, "cache: rimpiazzo impossibile - scrittura %s fallita\n", f_name);
+			*cache->lock = 0;
+			pthread_mutex_unlock(&(*cache->mtx));
+			return -1;
+		}
+	}
+
+	file* new;
+	if(node_rep != NULL){ 		//se ho un rimpiazzo setto il nodo rimpiazzato
+		new = node_rep;
+	}else{
+		new = enqueue(cache);	//altrimenti alloco un nuovo nodo e setto
+	}
+
+	//data setting nodo
+	strcpy(f_name, new->f_name);
+	new->f_size = dim_f;
+	ec_null((new->f_data = calloc(sizeof(byte), f_size)), "cache: calloc cache_writeFile fallita");
+	for (int i = 0; i < f_size; i++){
+		new->f_data[i] = f_data[i];
+	}
+
+	//aggiornamento capacità cache post-scrittra
+	cache_capacity_update(dim_f);
+	
+	pthread_mutex_unlock(&(*cache->mtx));
+	*cache->lock = 0;
+	return 0;
+}
+
+//controllo capacità residua se si scrive un file
 int cache_capacity_control(int dim_file)
 {
 	if(used_mem + dim_file > cache_capacity) return -1;
 	else return 0;
 }
 
-void cache_capacity_update(int dim_file){
+//aggiornamento capacità cache
+void cache_capacity_update(int dim_file)
+{
 	used_mem = used_mem - dim_file;
 }
 
+//controlla se il file è un duplicato
 int cache_duplicate_control(file* cache, char* f_name)
 {
 	//caso cache vuota;
@@ -123,22 +107,7 @@ int cache_duplicate_control(file* cache, char* f_name)
 	return 0;
 }
 
-int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
-{
-	//CASO 1: controllo capienza cache pre-scrittura
-	if(cache_capacity_control(dim_f) == -1){
-		//serve memorizzare il file espulso?
-		char* file_rep;
-		//capienza non è sufficiente -> si tenta il rimpiazzo
-		if(replacement_algorithm(cache, f_name, f_data, dim_f, dirname) == NULL){
-			fprintf(stderr, "cache: rimpiazzo impossibile - scrittura %s fallita\n", f_name);
-			return -1; //scrittura fallita
-		}
-		return 0;
-	}
-
-}
-
+//inserisce un codo in testa
 file* cache_enqueue(file** cache)
 {
 	//allocazione
@@ -161,6 +130,7 @@ file* cache_enqueue(file** cache)
 	//caso cache vuota
 	if (*cache == NULL){
 		*cache = new;
+		//unlock1
 		if (pthread_mutex_unlock(&(new->mtx)) != 0){
 			LOG_ERR(errno, "cache: lock fallita in cache_create_file");
 			exit(EXIT_FAILURE);
@@ -176,6 +146,7 @@ file* cache_enqueue(file** cache)
 	}
 	temp->next = new;
 	new->next = NULL;
+	//unlock2
 	if (pthread_mutex_unlock(&(new->mtx)) != 0){
 			LOG_ERR(errno, "cache: lock fallita in cache_create_file");
 			exit(EXIT_FAILURE);
@@ -183,10 +154,70 @@ file* cache_enqueue(file** cache)
 	return new;
 }
 
-//equivalente a una enqueue in O(n) (come fosse un inserimento in coda, dove coda = testa)
-int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
-{	
 
+
+
+file* replacement_algorithm(file* cache, char* f_name, size_t dim_f, char* dirname)
+{
+	//cerca nodo che rispetti condizione di rimpiazzo (size_old >= size_new)
+	//caso peggiore O(n), caso migliore O(1) (testa e coda sono invertiti)
+	//return ptr al nodo di rimpiazzo
+
+	if (pthread_mutex_lock(&(cache->mtx)) != 0){
+		LOG_ERR(errno, "cache: pthread_mutex_init fallita in cache_create_file");
+		exit(EXIT_FAILURE);
+	}
+
+	//cerca un nodo rimpiazzabile
+	file* temp = cache;
+	while(temp->f_size >= dim_f && temp->next != NULL){
+		temp = temp->next;
+	}
+	//controllo terminazione ricerca 
+	if(temp->next == NULL && temp->f_size >= dim_f ){
+		printf("rimpiazzo impossibile\n");
+		if (pthread_mutex_unlock(&(cache->mtx)) != 0){
+			LOG_ERR(errno, "cache: lock fallita in replacement_algorithm");
+			exit(EXIT_FAILURE);
+		}
+		return NULL;
+	}else{
+		//nodo trovato: si procede con il rimpiazzo -> il file sostituito si scrive in dirname se != NULL
+		//salvo nome file da espellere (!) serve?
+		char* rep_file;
+		size_t len = stelen(rep_file);
+		strcpy(rep_file, temp->f_name);
+		
+		//scrittura del file espulso in dirname
+		if (dirname != NULL){
+			//se non esiste, creare directory per scrittura file
+			if (mkdir(dirname,  S_IRWXU | S_IRWXG | S_IRWXO) == -1) {
+				LOG_ERR(errno, "cache replacement_algorithm:");
+			}
+			//mi sposto nella cartella e scrivo il file
+			chdir(s);	
+			FILE* fd;
+			ec_null(fd = fopen(dirname, "wr"), "cache: fopen fallita in replacement_algorithm");
+			ec_meno1(fwrite(rep_file, sizeof(char), rep_len, fd), "cache: fwrite fallita in replacement_algorithm");
+			fclose(fd);
+			//torno alla directory di partenza
+			chdir("../");				
+		}
+		cache_capacity_update(dim_f);
+	}
+	if (pthread_mutex_unlock(&(cache->mtx)) != 0){
+			LOG_ERR(errno, "cache: lock fallita in replacement_algorithm");
+			exit(EXIT_FAILURE);
+	}
+	return temp;
+}	
+
+
+
+
+
+int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
+{
 	//controllo capienza cache pre-scrittura
 	if(cache_capacity_control(dim_f) == -1){
 		//serve memorizzare il file espulso?
@@ -199,27 +230,25 @@ int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char
 		}
 	}
 
-	file* new;
-	if(node_rep != NULL){ 		//se ho un rimpiazzo setto il nodo rimpiazzato
-		new = node_rep;
-	}else{
-		new = enqueue(cache);	//altrimenti alloco un nuovo nodo e setto
-	}
-
 	//data setting nodo
-	strcpy(f_name, new->f_name);
-	new->f_size = dim_f;
+	strcpy(f_name, node->f_name);
+	node->f_size = dim_f;
 
-	ec_null((new->f_data = calloc(sizeof(byte), f_size)), "cache: calloc cache_writeFile fallita");
+	ec_null((node->f_data = calloc(sizeof(byte), f_size)), "cache: calloc cache_writeFile fallita");
 	//new->f_data = calloc(sizeof(byte), f_size);
 	for (int i = 0; i < f_size; i++){
-		new->f_data[i] = f_data[i];
+		node->f_data[i] = f_data[i];
 	}
 
 	//aggiornamento capacità cache post-scrittra
 	cache_capacity_update(dim_f);
 	return 0;
 }
+
+}
+
+
+
 
 int cache_lockFile(file* cache, char* f_name)
 {
