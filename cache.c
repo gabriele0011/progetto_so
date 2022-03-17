@@ -44,26 +44,52 @@ void replacement_algorithm(file* cache, char* f_name, byte* f_data, size_t dim_f
 	while(temp->f_size >= dim_f && temp->next != NULL){
 		temp = temp->next;
 	}
+
 	//controllo terminazione
 	if(temp->next == NULL && temp->f_size >= dim_f ){
 		printf("rimpiazzo impossibile\n");
+		return -1;
 	}else{
+		pthread_mutex_lock(&(temp->mtx));
 		//si procede con il rimpiazzo -> il file in temp viene sostituito ma va prima scritto in dirname se != NULL;
-		if(temp->f_size >= dim_f){
+		if (temp->f_size >= dim_f){
 			//salvo nome file da espellere
 			char* rep_file;
+			size_t len = stelen(rep_file);
 			strcpy(rep_file, temp->f_name);
+			
 			//scrittura del file espulso in dirname
-			if(dirname != NULL){
-				//scrittura del file in dirname
+			if (dirname != NULL){
+				//se non esiste, creare directory per scrittura file
+				if (mkdir(dirname,  S_IRWXU | S_IRWXG | S_IRWXO) == -1) {
+					LOG_ERR(errno, "cache replacement_algorithm:");
+				}
+				//mi sposto nella cartella e scrivo il file
+				chdir(s);	
+				FILE* fd;
+				ec_null(fd = fopen(dirname, "wr"), "cache: fopen fallita in replacement_algorithm");
+				ec_meno1(fwrite(rep_file, sizeof(char), rep_len, fd), "cache: fwrite fallita in replacement_algorithm");
+				fclose(fd);
+				//torno alla directory di partenza
+				chdir("../");				
 			}
+
+			//setting parametri
 			temp->f_size = dim_f;
-			cache_capacity_update(dim_f)
-7
+			strcpy(temp->f_name, rep_file); 
+			cache_capacity_update(dim_f);
+			
+			//ripulisce il buffer e riscrive
+			free(temp->f_data);
+			ec_null((temp->f_data = calloc(sizeof(byte), f_size)), "cache: calloc cache_writeFile fallita");
+			for (int i = 0; i < f_size; i++){
+				temp->f_data[i] = f_data[i];
+			}
+
 		}
-
+		pthread_mutex_unlock(&(temp->mtx));
 	}
-
+	return 0;
 }	
 
 
@@ -105,14 +131,13 @@ int cache_duplicate_control(file* cache, char* f_name)
 }
 
 
-//(!) il file eventualmente espulso dall'algoritmo di rimpiazzo?
 //equivalente a una enqueue in O(n) (come fosse un inserimento in coda, dove coda = testa)
-file* cache_writeFile(file* cache, char* f_name, byte* f_data, size_t dim_f)
+file* cache_writeFile(file* cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
 {	
 
 	if(cache_capacity_control(dim_f) == -1){
 		char* file_rep;
-		replacement_algorithm
+		replacement_algorithm...
 		return cache;
 	}
 
