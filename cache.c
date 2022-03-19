@@ -7,12 +7,12 @@ typedef unsigned char byte;
 
 
 #define mutex_lock(addr_mtx, error_msg) \
-	 if(pthread_mutex_lock(addr_mtx) != 0){ \
+	if(pthread_mutex_lock(addr_mtx) != 0){ \
 			LOG_ERR(errno, error_msg); \
 			exit(EXIT_FAILURE);	\
 	}
 #define mutex_unlock(addr_mtx, error_msg) \
-	 if(pthread_mutex_unlock(addr_mtx) != 0){ \
+	if(pthread_mutex_unlock(addr_mtx) != 0){ \
 			LOG_ERR(errno, error_msg); \
 			exit(EXIT_FAILURE);	\
 	}
@@ -87,7 +87,11 @@ int cache_duplicate_control(file* cache, char* f_name)
 //scrittura di un file in cache (usa enqueue)
 int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
 {	
-
+	//controllo preliminare memoria
+	if(cache_capacity < dim_f){
+		LOG_ERR(-1, "cache: scrittura fallita, dim. file maggiore della capacità della cache");
+		return -1;
+	}
 
 	//caso coda non vuota -> controllo rimpiazzo
 	file* node_rep = NULL;
@@ -138,15 +142,16 @@ file* replacement_algorithm(file* cache, char* f_name, size_t dim_f, char* dirna
 	//cerca nodo che rispetti condizione di rimpiazzo (size_old >= size_new)
 	//caso peggiore O(n), caso migliore O(1) (testa e coda sono invertite)
 	//return ptr al nodo di rimpiazzo
-	
+
 	file* rep;
-	
 	//caso un elemento in coda -> controllo immediato di rimpiazzo
 	if(cache->next == NULL){
 		if(cache->f_size >= dim_f){
 			mutex_lock(&(cache->mtx), "cache: lock fallita in replacement_algorithm");
 			rep = cache;
 			mutex_unlock(&(cache->mtx), "cache: unlock fallita in replacement_algorithm");
+		}else{
+			return NULL;
 		}
 	//caso ricerca concorrente in coda con piu di due elementi
 	}else{
@@ -470,11 +475,11 @@ void print_queue(file* cache)
 int main(){
 
 	file* cache = NULL;
-	create_cache(10, 50);
+	create_cache(5, 50);
 	char dirname[4] = {'a', 'g', 'o', '\0'};
 
 	char f_name[6] = {'f', 'i', 'l', 'e', '1', '\0'};
-	byte data[6] = {'c', 'i', 'a', '\0'};
+	byte data[4] = {'c', 'i', 'a', '\0'};
 	cache_writeFile(&cache, f_name, data, 4, dirname);
 	print_queue(cache);
 
@@ -489,6 +494,10 @@ int main(){
 	cache_writeFile(&cache, f_name3, data3, 5, dirname);
 	print_queue(cache);
 
+	char f_name4[6] = {'f', 'i', 'l', 'e', '4', '\0'};
+	byte data4[5] = {'s', 't', 'a', 'i', '\0'};
+	cache_writeFile(&cache, f_name4, data4, 5, NULL);
+	print_queue(cache);
 
 	return 0;
 
