@@ -90,7 +90,8 @@ file* cache_research(file* cache, char* f_name)
 	}
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	if(node != NULL) printf("nodo trovato cache->f_name: %s\n", node->f_name);
+	
+	if(node != NULL) printf("DEBUG: nodo trovato cache->f_name: %s\n", node->f_name);
 	return node;
 }
 
@@ -470,18 +471,39 @@ int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, c
 	mutex_unlock(&mtx, "cache: lock fallita in cache_appendToFile");
 	
 	printf("DEBUG: cache_appendToFile riuscita\n");
-	for (int i = 0;  i < node->f_size; i++)
-		printf("%c", node->f_data[i]);
 	return 0;
 }
 
 
-/*
 int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf)
+{
+	//controllo preliminare: il file deve esistere
+	file* node;
+	if((node = cache_research(cache, f_name)) == NULL){
+		printf("cache: cache_research non ha trovato %s (cache_readFile)\n", f_name);
+		return -1;
+	}
+	//controllo f_lock
+	if(node->f_lock != 0){
+		printf("cache_readFile: nodo locked, operazione fallita");
+		return -1;
+	}
+	mutex_lock(&(node->mtx), "cache: lock in cache_readFile fallita");
+	*dim_buf = node->f_size;
+	ec_null((*buf = calloc(sizeof(byte), *dim_buf)), "cache: calloc in cache_readFile fallita");
+	for (int i = 0; i < *dim_buf; i++){
+		*buf[i] = node->f_data[i];
+	}
+	mutex_unlock(&(node->mtx), "cache: unlock in cache_readFile fallita");
+	return 0;
+}
+
+
+
 
 int cache_readNFile(file* cache, size_t N, char* dirname)
 
-*/
+
 
 
 
