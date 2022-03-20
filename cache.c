@@ -61,6 +61,40 @@ void create_cache(int mem_size, int max_file_in_cache)
 	mutex_unlock(&mtx, "cache: unlock fallita in create_cache");
 }
 
+file* cache_research(file* cache, char* f_name)
+{
+	//due o piu elementi in coda
+	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+	file* prev = cache;
+	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
+	file* curr = cache->next;
+
+	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
+	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+
+	file* aux;
+	while (curr->next != NULL){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
+
+	}
+	file* node = NULL;
+	if (strcmp(prev->f_name, f_name) == 0){
+		node = prev;
+	}else{
+		if (curr->next == NULL && (strcmp(prev->f_name, f_name) == 0))
+			node = curr;
+	}
+	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
+	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
+	if(node != NULL) printf("nodo trovato cache->f_name: %s\n", node->f_name);
+	return node;
+}
+
+
 //controllo capacità residua se si scrive un file
 int cache_capacity_control(int dim_file)
 {
@@ -108,7 +142,7 @@ int cache_duplicate_control(file* cache, char* f_name)
 	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
 
 	file* aux;
-	while (curr->next != NULL){
+	while (curr->next != NULL && strcmp(prev->f_name, f_name) == 0){
 		aux = prev;
 		prev = curr;
 		curr = curr->next;
@@ -116,7 +150,7 @@ int cache_duplicate_control(file* cache, char* f_name)
 		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
 
 	}
-	int x;
+	int x = 0;
 	if (strcmp(prev->f_name, f_name) == 0){
 		x = 1;
 	}else{
@@ -258,10 +292,9 @@ file* replacement_algorithm(file* cache, char* f_name, size_t dim_f, char* dirna
 	return rep;
 }	
 
-
 //inserisce un codo in testa
 file* cache_enqueue(file** cache)
-{	
+{
 	//creazione nuovo nodo
 	file* new;
 	ec_null((new = malloc(sizeof(file))), "cache: malloc cache_writeFile fallita");
@@ -312,80 +345,42 @@ file* cache_enqueue(file** cache)
 	return new;
 }
 
-
 int cache_lockFile(file* cache, char* f_name, int id)
 {
 
-	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
-	file* prev = cache;
-	file* curr = cache->next;
-
-	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
-	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-
-	file* aux;
-	while (curr->next != NULL){
-		aux = prev;
-		prev = curr;
-		curr = curr->next;
-		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
-
+	file* node;
+	if ((node = cache_research(cache, f_name)) == NULL){
+		printf("file non trovato\n");
+		return -1;
 	}
-	int x = -1;
-	if (strcmp(prev->f_name, f_name) == 0){
-		prev->f_lock = id;
-		x = 0;
-		printf("f_name: %s - f_lock = %d\n", prev->f_name, prev->f_lock);
-	}else{
-		if (curr->next == NULL && (strcmp(curr->f_name, f_name) == 0)){
-			curr->f_lock = id;
-			x = 0;
-			printf("f_name: %s - f_lock = %d\n", curr->f_name, curr->f_lock);
-		}
-	}
-	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
-	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	return x;
+	node->f_lock = id;
+	return 0;
 }
-
 
 int cache_unlockFile(file* cache, char* f_name, int id)
-{
-	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
-	file* prev = cache;
-	file* curr = cache->next;
-
-	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
-	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-
-	file* aux;
-	while (curr->next != NULL){
-		aux = prev;
-		prev = curr;
-		curr = curr->next;
-		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
-
+{	
+	file* node;
+	if ((node = cache_research(cache, f_name)) == NULL){
+		printf("file non trovato\n");
+		return -1;
 	}
-	int x = -1;
-	if (strcmp(prev->f_name, f_name) == 0){
-		if(prev->f_lock == id){
-			prev->f_lock = 0;
-			x = 0;
-		}
-	}else{
-		if (curr->next == NULL && (strcmp(curr->f_name, f_name) == 0)){
-			if(curr->f_lock == id){
-				curr->f_lock = 0;
-				x = 0;
-			}
-		}
-	}
-	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
-	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	return x;
+	if(node->f_lock == id)
+		node->f_lock = 0;
+	return 0;
 }
+
+
+
+
+/*
+//cache_removeFile
+int cache_removeFile(file* cache, char* f_name, int id)
+{
+
+
+}
+*/
+
 /*
 int cache_appendToFile(file* cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
 {
@@ -409,17 +404,13 @@ int cache_appendToFile(file* cache, char* f_name, byte* f_data, size_t dim_f, ch
 	return 0;
 }
 
-*/
-/*
 int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf)
 
 int cache_readNFile(file* cache, size_t N, char* dirname)
 
-
-//cache_removeFile
-int cache_removeFile(file* cache, char* f_name)
-
 */
+
+
 
 void print_queue(file* cache)
 {
@@ -441,22 +432,27 @@ int main(){
 	cache_writeFile(&cache, f_name, data, 4, dirname);
 	//print_queue(cache);
 
+	char f_name5[6] = {'f', 'i', 'l', 'e', '1', '\0'};
+	byte data5[4] = {'c', 'i', 'a', '\0'};
+	cache_writeFile(&cache, f_name5, data5, 4, dirname);
 
 	char f_name1[6] = {'f', 'i', 'l', 'e', '2', '\0'};
 	byte data1[8] = {'c', 'o', 'm', 'e', 's', 't', 'a', '\0'};
 	cache_writeFile(&cache, f_name1, data1, 8, dirname);
 	print_queue(cache);
 
-	//cache_appendToFile(cache, f_name1, data1, 5, dirname);
+	//cache_lockFile(cache, "file1", 1996);
+	//cache_research(cache, "file1");
 
+	//cache_appendToFile(cache, f_name1, data1, 5, dirname);
 	char f_name3[6] = {'f', 'i', 'l', 'e', '3', '\0'};
 	byte data3[5] = {'s', 't', 'a', 'i', '\0'};
-	//cache_writeFile(&cache, f_name3, data3, 5, dirname);
+	cache_writeFile(&cache, f_name3, data3, 5, dirname);
 	//print_queue(cache);
 
 	char f_name4[6] = {'f', 'i', 'l', 'e', '4', '\0'};
 	byte data4[5] = {'s', 't', 'a', 'i', '\0'};
-	//cache_writeFile(&cache, f_name4, data4, 5, NULL);
+	cache_writeFile(&cache, f_name4, data4, 5, NULL);
 	//print_queue(cache);
 
 	return 0;
