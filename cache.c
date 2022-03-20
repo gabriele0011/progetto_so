@@ -30,7 +30,7 @@ typedef struct _file
 	size_t f_size;		//lung. in byte
 	byte* f_data;		//array di byte di lung. f_size
 	byte f_write;		//il file è in scrittura
-	byte f_lock;		//il file è in locl
+	int f_lock;		//il file è in locl
 	pthread_mutex_t mtx;	//mutex nodo
 	struct _file* next;	//nodo successivo
 }file;
@@ -59,7 +59,6 @@ void create_cache(int mem_size, int max_file_in_cache)
 	mutex_lock(&mtx, "cache: lock fallita in create_cache");
 	used_mem = 0;
 	mutex_unlock(&mtx, "cache: unlock fallita in create_cache");
-
 }
 
 //controllo capacità residua se si scrive un file
@@ -117,17 +116,17 @@ int cache_duplicate_control(file* cache, char* f_name)
 		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
 
 	}
-
+	int x;
 	if (strcmp(prev->f_name, f_name) == 0){
-		return 1;
+		x = 1;
 	}else{
 		if (curr->next == NULL && (strcmp(prev->f_name, f_name) == 0)){
-				return 1;
+				x = 1;
 		}
 	}
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	return 0;
+	return x;
 }	
 
 
@@ -314,199 +313,112 @@ file* cache_enqueue(file** cache)
 }
 
 
-
-/*
-int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
+int cache_lockFile(file* cache, char* f_name, int id)
 {
 
-		file* node_rep = NULL;	//puntatore al nodo da rimpiazzare
-	//controllo capienza cache pre-scrittura
-	if(cache_capacity_control(dim_f) == -1){
-		//serve memorizzare il file espulso?
-		char* file_rep;
-		//CASO 1: capienza non è sufficiente -> si tenta il rimpiazzo
-		if((node_rep = replacement_algorithm(*cache, f_name, dim_f, dirname)) == NULL){
-			fprintf(stderr, "cache: rimpiazzo impossibile - scrittura %s fallita\n", f_name);
-			return -1; //scrittura fallita
+	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
+	file* prev = cache;
+	file* curr = cache->next;
+
+	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
+	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+
+	file* aux;
+	while (curr->next != NULL){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
+
+	}
+	int x = -1;
+	if (strcmp(prev->f_name, f_name) == 0){
+		prev->f_lock = id;
+		x = 0;
+		printf("f_name: %s - f_lock = %d\n", prev->f_name, prev->f_lock);
+	}else{
+		if (curr->next == NULL && (strcmp(curr->f_name, f_name) == 0)){
+			curr->f_lock = id;
+			x = 0;
+			printf("f_name: %s - f_lock = %d\n", curr->f_name, curr->f_lock);
 		}
 	}
-	if (pthread_mutex_lock(&(node_rep->mtx)) != 0){
-		LOG_ERR(errno, "cache: lock fallita in cache_appendToFile");
-		exit(EXIT_FAILURE);
-	}	
-
-	//data setting nodo
-	strcpy(f_name, node->f_name);
-	node->f_size = dim_f;
-
-	ec_null((node_rep->f_data = calloc(sizeof(byte), node_rep->f_size)), "cache: calloc cache_writeFile fallita");
-	//new->f_data = calloc(sizeof(byte), f_size);
-	for (int i = 0; i < dim_f; i++){
-		node_rep->f_data[i] = f_data[i];
-	}
-
-	//aggiornamento capacità cache post-scrittra
-	cache_capacity_update(dim_f);
-	if (pthread_mutex_unlock(&(node_rep->mtx)) != 0){
-		LOG_ERR(errno, "cache: unlock fallita in cache_appendToFile");
-		exit(EXIT_FAILURE);
-	}
-	return 0;
+	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
+	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
+	return x;
 }
 
 
-int cache_lockFile(file* cache, char* f_name)
+int cache_unlockFile(file* cache, char* f_name, int id)
 {
-	if (pthread_mutex_lock(&(cache->mtx)) != 0){
-		LOG_ERR(errno, "cache: pthread_mutex_init fallita in lockFile");
-		exit(EXIT_FAILURE);
-	}
-	//ricerca elemento
-	file* temp = cache;
-	while(temp->next != NULL){
-		if(strcmp(temp->f_name, f_name) == 0){
-			temp->f_lock == 1;
-		}
-		temp = temp->next;
-	}
-	if(temp->next == NULL && strcmp(temp->f_name, f_name) != 0 ){ 
-		if (pthread_mutex_lock(&(cache->mtx)) != 0){
-			LOG_ERR(errno, "cache: pthread_mutex_init fallita in lockFile");
-			exit(EXIT_FAILURE);
-		}
-		return -1;
-	}
-	
-	if (pthread_mutex_lock(&(cache->mtx)) != 0){
-		LOG_ERR(errno, "cache: pthread_mutex_init fallita in lockFile");
-		exit(EXIT_FAILURE);
-	}
-	return 0;
-}
+	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
+	file* prev = cache;
+	file* curr = cache->next;
 
+	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
+	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
 
-int cache_unlockFile(file* cache, char* f_name)
-{
-	if (pthread_mutex_lock(&(cache->mtx)) != 0){
-		LOG_ERR(errno, "cache: pthread_mutex_init fallita in unlockFile");
-		exit(EXIT_FAILURE);
+	file* aux;
+	while (curr->next != NULL){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
+
 	}
-	//ricerca elemento
-	file* temp = cache;
-	while(temp->next != NULL){
-		if(strcmp(temp->f_name, f_name) == 0){
-			if(!temp->f_lock && !temp->f_write){
-				temp->f_lock == 0;
-			}else{
-				return -1;
+	int x = -1;
+	if (strcmp(prev->f_name, f_name) == 0){
+		if(prev->f_lock == id){
+			prev->f_lock = 0;
+			x = 0;
+		}
+	}else{
+		if (curr->next == NULL && (strcmp(curr->f_name, f_name) == 0)){
+			if(curr->f_lock == id){
+				curr->f_lock = 0;
+				x = 0;
 			}
 		}
-		temp = temp->next;
 	}
-	
-	if(temp->next == NULL && strcmp(temp->f_name, f_name) != 0 ){
-		if (pthread_mutex_unlock(&(cache->mtx)) != 0){
-			LOG_ERR(errno, "cache: unlock fallita in unlockFile");
-			exit(EXIT_FAILURE);
-		}
-		return -1;
-	}
-	return 0;
+	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
+	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
+	return x;
 }
-
-int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf)
+/*
+int cache_appendToFile(file* cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
 {
-	if (pthread_mutex_lock(&(cache->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: lock in cache_readFile fallita");
-		exit(EXIT_FAILURE);
+	//controllo preliminare: il file deve esistere
+	if(!cache_duplicate_control(cache, f_name)) return -1;
+	
+	mutex_lock(&mtx, "cache: lock in cache_appendToFile fallita");
+	while(cache->next != NULL && strcmp(cache->f_name, f_name) ==0 ){
+		cache = cache->next;
 	}
+	//ce la fai a scrivere in append? se si ok altrimenti è necessario un rimpiazzo
+	cache->f_size = cache->f_size+dim_f;
+	ec_null((cache->f_data = realloc(cache->f_data, (cache->f_size) * sizeof(byte))), "cache: realloc fallita in cache_appendToFile");
 
-	file* temp = cache;
-	while (temp->next != NULL && strcmp(temp->f_name, f_name) == 0){
-		temp->temp->next;	
-	}
-	if(!temp->f_lock && !temp->f_write){
-		*buf = temp->f_data;
-		dim_buf = temp->f_size;
-	}else{
-		return -1;
-	}
 
-	if (pthread_mutex_unlock(&(cache->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: unlock in cache_readFile fallita");
-		exit(EXIT_FAILURE);
+	for (int i = cache->f_size; i < cache->f_size; i++){
+		cache->f_data[i] = f_data[i];
 	}
+	//unlock
+	mutex_unlock(&mtx, "cache: unlock in cache_appendToFile fallita");
 	return 0;
-
 }
+
+*/
+/*
+int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf)
 
 int cache_readNFile(file* cache, size_t N, char* dirname)
-{
-	if (pthread_mutex_lock(&(cache->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: lock in cache_readFile fallita");
-		exit(EXIT_FAILURE);
-	}
-
-
-	//creo cartella di scrittura dei file
-	if (mkdir(dirname,  S_IRWXU | S_IRWXG | S_IRWXO) == -1) {
-		LOG_ERR(errno, "cache replacement_algorithm:");
-		return -1;
-	}
-	//mi sposto nella cartella
-	chdir(s);
-	int letti = 0;
-	//li leggo dalla coda in poi
-	file* temp = cache;
-	while(N > 0 && temp->next != NULL){
-		if(!temp->f_lock && !temp->f_write){
-			FILE* fd;
-			if (ec_null(fd = fopen(dirname, "wr"), "cache: fopen fallita in replacement_algorithm")) return -1;
-			if (ec_meno1(fwrite(temp->f_data, sizeof(char), temp->f_size, fd), "cache: fwrite fallita in replacement_algorithm")) return -1;
-			fclose(fd);
-			letti++;
-		}
-		N--;
-	}
-	//torno alla directory di partenza
-	chdir("../");	
-
-	if (pthread_mutex_unlock(&(cache->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: unlock in cache_readFile fallita");
-		exit(EXIT_FAILURE);
-	}
-	return letti;
-}
 
 
 //cache_removeFile
 int cache_removeFile(file* cache, char* f_name)
-{
 
-	if (pthread_mutex_lock(&(cache->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: lock in cache_removeFile fallita");
-		exit(EXIT_FAILURE);
-	}
-	file* curr = cache;
-	file* prev;
-
-	while(temp->next != NULL){
-		//nodo trovato 
-		if(strcmp(f_name, temp->f_name) == 0){
-			break;	
-		}
-		prev = temp;
-		temp = temp->next;
-	}
-	prev->next = temp->next;
-	free(temp);
-
-	if (pthread_mutex_unlock(&(cache->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: unlock in cache_removeFile fallita");
-		exit(EXIT_FAILURE);
-	}
-	return 0;
-}
 */
 
 void print_queue(file* cache)
@@ -521,7 +433,7 @@ void print_queue(file* cache)
 int main(){
 
 	file* cache = NULL;
-	create_cache(5, 50);
+	create_cache(100, 50);
 	char dirname[4] = {'a', 'g', 'o', '\0'};
 
 	char f_name[6] = {'f', 'i', 'l', 'e', '1', '\0'};
@@ -531,9 +443,11 @@ int main(){
 
 
 	char f_name1[6] = {'f', 'i', 'l', 'e', '2', '\0'};
-	byte data1[5] = {'c', 'i', 'a', '\0'};
-	cache_writeFile(&cache, f_name1, data1, 4, dirname);
+	byte data1[8] = {'c', 'o', 'm', 'e', 's', 't', 'a', '\0'};
+	cache_writeFile(&cache, f_name1, data1, 8, dirname);
 	print_queue(cache);
+
+	//cache_appendToFile(cache, f_name1, data1, 5, dirname);
 
 	char f_name3[6] = {'f', 'i', 'l', 'e', '3', '\0'};
 	byte data3[5] = {'s', 't', 'a', 'i', '\0'};
