@@ -283,13 +283,15 @@ static file* cache_enqueue(file** cache)
 
 int cache_lockFile(file* cache, char* f_name, int id)
 {
-	//controllo che il file non sia gia lockato (!)
+
 	file* node;
 	if ((node = cache_research(cache, f_name)) == NULL){
 		printf("file non trovato\n");
 		return -1;
 	}
+	//mutex_lock(&(node->mtx), "cache_lockFile: lock fallita");
 	node->f_lock = id;
+	//mutex_unlock(&(node->mtx), "cache_lockFile: unlock fallita");
 	return 0;
 }
 
@@ -300,8 +302,10 @@ int cache_unlockFile(file* cache, char* f_name, int id)
 		printf("file non trovato\n");
 		return -1;
 	}
+	//mutex_lock(&(node->mtx), "cache_unlockFile: lock fallita");
 	if(node->f_lock == id)
 		node->f_lock = 0;
+	//mutex_unlock(&(node->mtx), "cache_unlockFile: unlock fallita");
 	return 0;
 }
 
@@ -416,9 +420,8 @@ int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char
 	strncpy(new->f_name, f_name, len_f_name);
 	new->f_size = dim_f;
 	ec_null((new->f_data = calloc(sizeof(byte), dim_f)), "cache: calloc cache_writeFile fallita");
-	for (int i = 0; i < dim_f; i++){
+	for (int i = 0; i < dim_f; i++)
 		new->f_data[i] = f_data[i];
-	}
 
 	//(!) ATTENZIONE: IN BASE AL VALORE DI id SETTA lock. es. se id = -77 vuol dire che deve essere creato in f_lock = 1;
 	//unlock
@@ -531,15 +534,14 @@ int cache_readNFile(file* cache, size_t N, char* dirname, int id)
 
 	}
 	if(curr->next == NULL){
-		if (--N > 0 && scan++){
-			if(prev->f_lock == 0 || prev->f_lock == id)
-				cache_writeInDir(prev, dirname);
+		if (--N > 0 && (prev->f_lock == 0 || prev->f_lock == id)){
+			cache_writeInDir(prev, dirname);
+			scan++;
 		}
-		if(--N > 0 && scan++){
-			if(prev->f_lock == 0 || prev->f_lock == id)
-				cache_writeInDir(curr, dirname);
+		if(--N > 0 && (curr->f_lock == 0 || curr->f_lock == id) ){
+			cache_writeInDir(curr, dirname);
+			scan++;
 		}
-
 	}
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
@@ -547,6 +549,38 @@ int cache_readNFile(file* cache, size_t N, char* dirname, int id)
 	return scan;
 }
 
+//funzione di deallocazione
+file* cache_dealloc(file* cache)
+{
+	if(cache == NULL) return  NULL;
+	if(cache->next == NULL){
+		free(cache);
+		return NULL;
+	}
+	
+	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+	file* prev = cache;
+	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
+	file* curr = cache->next;
+
+	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
+	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+
+	file* aux;
+	while (curr->next != NULL){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
+		free(aux);
+	}
+	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
+	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
+	free(prev);
+	free(curr);
+	return NULL;
+}
 
 void print_queue(file* cache)
 {
@@ -576,13 +610,12 @@ int main(){
 	char f_name3[6] = {'f', 'i', 'l', 'e', '3', '\0'};
 	byte data3[5] = {'s', 't', 'a', 'i', '\0'};
 	cache_writeFile(&cache, f_name3, data3, 5, dirname, 1996);
-	//print_queue(cache);
 
 	char f_name4[6] = {'f', 'i', 'l', 'e', '4', '\0'};
 	byte data4[5] = {'s', 't', 'a', 'i', '\0'};
 	cache_writeFile(&cache, f_name4, data4, 5, NULL, 1996);
-	print_queue(cache);
-
+	
+	cache = cache_dealloc(cache);
 /*
 	byte datax[4] = {'c', 'i', 'a', '\0'};
 	cache_appendToFile(&cache, f_name3, datax, 4, NULL, 0);
@@ -596,7 +629,6 @@ int main(){
 			printf("%c", buf[i]);
 		printf("\n");
 	}
-
 
 	cache_readNFile(cache, 10, "file_letti", 1996);
 	cache_lockFile(cache, "file1", 1996);
