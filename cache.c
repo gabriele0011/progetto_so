@@ -1,7 +1,3 @@
-//note:
-//1. considera nella procedure se un file è lockato dal client
-//2. deallocazione coda 
-
 #include "err_control.h"
 typedef unsigned char byte;
 
@@ -581,7 +577,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 	//caso un elemento in lista
 	mutex_lock(&mtx, "cache_removeFile: lock fallita");
 	if((*cache)->next == NULL && strcmp((*cache)->f_name, f_name) == 0){
-		if((*cache)->f_lock != 0 || (*cache)->f_lock == id ){
+		if((*cache)->f_lock == 0 || (*cache)->f_lock == id ){
 			*cache = NULL;
 			free(*cache);
 			mutex_unlock(&mtx, "cache_removeFile: unlock fallita");
@@ -621,7 +617,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 		x = 0;
 	}else{
 		//se si tratta dell'ultimo elemento della lista
-		if (curr->next == NULL && (strcmp(curr->f_name, f_name) == 0) && (curr->f_lock != 0 || curr->f_lock == id)){
+		if ((strcmp(curr->f_name, f_name) == 0) && (curr->f_lock == 0 || curr->f_lock == id)){
 				prev->next = NULL;
 				free(curr);
 				//aggiornamento capacità cache
@@ -779,33 +775,25 @@ int cache_readNFile(file* cache, int N, int id, file*** array)
 //funzione di deallocazione
 file* cache_dealloc(file* cache)
 {
-	if(cache == NULL) return  NULL;
+	mutex_lock(&mtx, "cache_dealloc: lock fallita");
+	if(cache == NULL){ 
+		mutex_lock(&mtx, "cache_dealloc: lock fallita");
+		return  NULL;
+	}
 	if(cache->next == NULL){
 		free(cache);
+		mutex_lock(&mtx, "cache_dealloc: lock fallita");
 		return NULL;
 	}
-	
-	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
-	file* prev = cache;
-	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
-	file* curr = cache->next;
 
-	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
-	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-
-	file* aux;
+	file* curr = cache;
+	file* prev;
 	while (curr->next != NULL){
-		aux = prev;
 		prev = curr;
-		curr = curr->next;
-		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
-		free(aux);
+		curr= curr->next;
+		free(prev);
 	}
-	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
-	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	free(prev);
-	free(curr);
+	mutex_lock(&mtx, "cache_dealloc: lock fallita");
 	return NULL;
 }
 
@@ -828,17 +816,17 @@ int main(){
 	char f_name1[6] = {'f', 'i', 'l', 'e', '1', '\0'};
 	byte data1[6] = {'c', 'i', 'a','c', 'i', '\0'};
 	cache_writeFile(&cache, f_name1, data1, 6, dirname, 1996);
-	print_queue(cache);
-/*
+	//print_queue(cache);
+	
 	char f_name2[6] = {'f', 'i', 'l', 'e', '2', '\0'};
 	byte data2[8] = {'c', 'o', 'm', 'e', 's', 't', 'a', '\0'};
 	cache_writeFile(&cache, f_name2, data2, 8, dirname, 1996);
-	print_queue(cache);
+	//print_queue(cache);
 
 	char f_name3[6] = {'f', 'i', 'l', 'e', '3', '\0'};
 	byte data3[5] = {'s', 't', 'a', 'i', '\0'};
 	cache_writeFile(&cache, f_name3, data3, 5, dirname, 1996);
-	print_queue(cache);
+	//print_queue(cache);
 
 
 	char f_name4[6] = {'f', 'i', 'l', 'e', '4', '\0'};
@@ -846,6 +834,7 @@ int main(){
 	cache_writeFile(&cache, f_name4, data4, 8, NULL, 1996);
 	print_queue(cache);
 
+/*
 	//cache = cache_dealloc(cache);
 	byte datax[4] = {'c', 'i', 'a', '\0'};
 	cache_appendToFile(&cache, f_name4, datax, 4, NULL, 1996);
@@ -861,17 +850,16 @@ int main(){
 			printf("%c", buf[i]);
 		printf("\n");
 	}
-*/
 	file** array;
 	cache_readNFile(cache, 1, 1996, &array);
-
 	printf("file: %s\n", array[0]->f_name);
-
+*/
+	cache_removeFile(&cache, f_name4, 1996);
+	print_queue(cache);
 /*
 	cache_readNFile(cache, 10, "file_letti", 1996);
 	cache_lockFile(cache, "file1", 1996);
 	cache_research(cache, "file2");
-	cache_removeFile(&cache, f_name4, 1997);
 */
 	
 	return 0;
