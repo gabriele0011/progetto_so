@@ -69,12 +69,12 @@ static file* cache_research(file* cache, char* f_name)
 {
 	
 	//controllo coda vuota
-	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+	mutex_lock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	if (cache == NULL){
 		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 		return NULL;
 	}
-	mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+	mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	
 	//controllo coda con un elemento
 	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
@@ -82,10 +82,8 @@ static file* cache_research(file* cache, char* f_name)
 		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 		return cache;
 	}
-	mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 	
 	//due o piu elementi in coda
-	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 	file* prev = cache;
 	mutex_lock(&(cache->next->mtx), "cache: unlock fallita in cache_duplicate_control");
 	file* curr = cache->next;
@@ -536,7 +534,6 @@ static int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f,
 
 int cache_lockFile(file* cache, char* f_name, int id)
 {
-
 	file* node;
 	if ((node = cache_research(cache, f_name)) == NULL){
 		printf("file non trovato\n");
@@ -688,8 +685,12 @@ int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf, int i
 
 int cache_readNFile(file* cache, int N, int id, file*** array)
 {
+	mutex_lock(&mtx, "cache_readNFile: lock fallita");
 	//caso coda vuota
-	if(cache == NULL) return 0;
+	if(cache == NULL){
+		mutex_unlock(&mtx, "cache_readNFile: unlock fallita");
+		return 0;
+	}
 
 	if (N < 0) N = max_storage_file;
 	ec_null((*array = calloc(sizeof(file*), N)), "cache_readNFile: calloc fallita");
@@ -698,7 +699,6 @@ int cache_readNFile(file* cache, int N, int id, file*** array)
 	}
 
 	//caso coda con un elemento
-	mutex_lock(&mtx, "cache_readNFile: lock fallita");
 	if(cache->next == NULL && (cache->f_lock == 0 || cache->f_lock == id)){
 		size_t len = strlen(cache->f_name);
 		(*array)[0]->f_name = calloc(sizeof(char), len);
@@ -777,12 +777,12 @@ file* cache_dealloc(file* cache)
 {
 	mutex_lock(&mtx, "cache_dealloc: lock fallita");
 	if(cache == NULL){ 
-		mutex_lock(&mtx, "cache_dealloc: lock fallita");
+		mutex_unlock(&mtx, "cache_dealloc: lock fallita");
 		return  NULL;
 	}
 	if(cache->next == NULL){
 		free(cache);
-		mutex_lock(&mtx, "cache_dealloc: lock fallita");
+		mutex_unlock(&mtx, "cache_dealloc: lock fallita");
 		return NULL;
 	}
 
@@ -793,7 +793,7 @@ file* cache_dealloc(file* cache)
 		curr= curr->next;
 		free(prev);
 	}
-	mutex_lock(&mtx, "cache_dealloc: lock fallita");
+	mutex_unlock(&mtx, "cache_dealloc: unlock fallita");
 	return NULL;
 }
 
