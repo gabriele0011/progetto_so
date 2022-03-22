@@ -56,7 +56,7 @@ int cache_removeFile(file** cache, char* f_name, int id);
 int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id);
 int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id);
 int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf, int id);
-int cache_readNFile(file* cache, size_t N, char* dirname, int id);
+//int cache_readNFile(file* cache, size_t N, char* dirname, int id);
 void print_queue(file* cache);
 
 void create_cache(int mem_size, int max_file_in_cache)
@@ -538,7 +538,6 @@ static int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f,
 }
 
 
-
 int cache_lockFile(file* cache, char* f_name, int id)
 {
 
@@ -611,7 +610,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 	}
 	int x = -1;
 	//se il nodo da rimuovere è prev
-	if (strcmp(prev->f_name, f_name) == 0 && (prev->f_lock != 0 || prev->f_lock == id) ){
+	if (strcmp(prev->f_name, f_name) == 0 && (prev->f_lock == 0 || prev->f_lock == id) ){
 		//se si tratta del primo nodo della coda
 		if (prev == *cache) *cache = curr;
 		//altrimenti collego aux a curr (prev è in mezzo)
@@ -638,17 +637,46 @@ int cache_removeFile(file** cache, char* f_name, int id)
 
 int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf, int id)
 {
-	//controllo preliminare: il file deve esistere
-	file* node;
-	if((node = cache_research(cache, f_name)) == NULL){
-		printf("cache: cache_research non ha trovato %s (cache_readFile)\n", f_name);
+	
+	//controllo coda vuota
+	mutex_lock(&mtx, "cache: lock fallita in cache_duplicate_control");
+	if (cache == NULL){
+		mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
 		return -1;
 	}
-	//controllo f_lock
-	if(node->f_lock == 0 || node->f_lock == id){
-		printf("cache_readFile: nodo locked, operazione fallita");
-		return -1;
+	
+	//controllo coda con un elemento
+	if (cache->next == NULL && strcmp(cache->f_name, f_name) == 0){
+		mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
+		return 0;
 	}
+	mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
+	
+	//due o piu elementi in coda
+	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+	file* prev = cache;
+	mutex_lock(&(cache->next->mtx), "cache: unlock fallita in cache_duplicate_control");
+	file* curr = cache->next;
+
+	file* aux;
+	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
+		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
+
+	}
+	file* node = NULL;
+	if (strcmp(prev->f_name, f_name) == 0 && (prev->f_lock == 0 || prev->f_lock == id)){
+		node = prev;
+	}else{
+		if (strcmp(curr->f_name, f_name) == 0 && (curr->f_lock == 0 || curr->f_lock == id))
+			node = curr;
+	}
+	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
+	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
+
 	mutex_lock(&(node->mtx), "cache: lock in cache_readFile fallita");
 	*dim_buf = node->f_size;
 	ec_null((*buf = calloc(sizeof(byte), *dim_buf)), "cache: calloc in cache_readFile fallita");
@@ -657,44 +685,88 @@ int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf, int i
 	}
 	printf("DEBUG: fino a qui tutto bene\n");
 	mutex_unlock(&(node->mtx), "cache: unlock in cache_readFile fallita");
-	return 0;
+	if (node != NULL) return 0;
+	else return -1;
 }
 
 
-int cache_readNFile(file* cache, size_t N, char* dirname, int id)
+int cache_readNFile(file* cache, int N, int id, file*** array)
 {
-	if(N <= 0) return 0;
-	if(cache->next == NULL){}
+	//caso coda vuota
+	if(cache == NULL) return 0;
+
+	if (N < 0) N = max_storage_file;
+	ec_null((*array = calloc(sizeof(file*), N)), "cache_readNFile: calloc fallita");
+	for(int i = 0; i < N; i++){
+		(*array)[i] = malloc(sizeof(file));
+	}
+
+	//caso coda con un elemento
+	mutex_lock(&mtx, "cache_readNFile: lock fallita");
+	if(cache->next == NULL && (cache->f_lock == 0 || cache->f_lock == id)){
+		size_t len = strlen(cache->f_name);
+		(*array)[0]->f_name = calloc(sizeof(char), len);
+		strncpy((*array)[0]->f_name, cache->f_name, len);
+		//copia data e size data
+		(*array)[0]->f_size = cache->f_size;
+		(*array)[0]->f_data = calloc(sizeof(byte), cache->f_size);
+		for (int j = 0; j < cache->f_size; j++)
+			(*array)[0]->f_data[j] = cache->f_data[j];
+		mutex_unlock(&mtx, "cache_readNFile: unlock fallita");
+		return 1;
+	}
+	mutex_unlock(&mtx, "cache_readNFile: unlock fallita");
+
+	printf("DEBUGDEBUGDEBUG: fino a qui tutto bene\n");
 
 	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 	file* prev = cache;
-	mutex_unlock(&(cache->mtx), "cache: unlock fallita in cache_duplicate_control");
+	mutex_lock(&(cache->next->mtx), "cache: unlock fallita in cache_duplicate_control");
 	file* curr = cache->next;
 
-	mutex_lock(&(prev->mtx), "cache: lock fallita in cache_duplicate_control");
-	mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
-
-	file* aux;
+	file* aux = prev;
 	size_t scan = 0;
+	int i = 0;
 	while (curr->next != NULL && N > 0 ){
-		if(prev->f_lock == 0 || prev->f_lock == id)
-			//cache_writeInDir(prev, dirname);
+		if (prev->f_lock == 0 || prev->f_lock == id){
+			size_t len = strlen(prev->f_name);
+			(*array)[i]->f_name = calloc(sizeof(char), len);
+			strncpy((*array)[i]->f_name, prev->f_name, len);
+			//copia data e size data
+			(*array)[i]->f_size = prev->f_size;
+			(*array)[i]->f_data = calloc(sizeof(byte), prev->f_size);
+			for (int j = 0; j < prev->f_size; j++)
+				(*array)[i]->f_data[j] = prev->f_data[j];
+			N--; scan++; i++;
+		}
 		aux = prev;
 		prev = curr;
 		curr = curr->next;
 		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
 		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
-		N--;
-		scan++;
 
 	}
-	if(curr->next == NULL){
-		if (--N > 0 && (prev->f_lock == 0 || prev->f_lock == id)){
-			//cache_writeInDir(prev, dirname);
+	if (curr->next == NULL){
+		if (--N > 0 && (prev->f_lock == 0 || prev->f_lock == id && ++i)){
+			size_t len = strlen(prev->f_name);
+			(*array)[i]->f_name = calloc(sizeof(char), len);
+			strncpy((*array)[i]->f_name, prev->f_name, len);
+			//copia data e size data
+			(*array)[i]->f_size = prev->f_size;
+			(*array)[i]->f_data = calloc(sizeof(byte), prev->f_size);
+			for (int j = 0; j < prev->f_size; j++)
+				(*array)[i]->f_data[j] = prev->f_data[j];
 			scan++;
 		}
-		if(--N > 0 && (curr->f_lock == 0 || curr->f_lock == id) ){
-			//cache_writeInDir(curr, dirname);
+		if (--N > 0 && (curr->f_lock == 0 || curr->f_lock == id) && ++i ){
+			size_t len = strlen(curr->f_name);
+			(*array)[i]->f_name = calloc(sizeof(char), len);
+			strncpy((*array)[i]->f_name, curr->f_name, len);
+			//copia data e size data
+			(*array)[i]->f_size = curr->f_size;
+			(*array)[i]->f_data = calloc(sizeof(byte), curr->f_size);
+			for (int j = 0; j < curr->f_size; j++)
+				(*array)[i]->f_data[j] = curr->f_data[j];
 			scan++;
 		}
 	}
@@ -757,7 +829,7 @@ int main(){
 	byte data1[6] = {'c', 'i', 'a','c', 'i', '\0'};
 	cache_writeFile(&cache, f_name1, data1, 6, dirname, 1996);
 	print_queue(cache);
-
+/*
 	char f_name2[6] = {'f', 'i', 'l', 'e', '2', '\0'};
 	byte data2[8] = {'c', 'o', 'm', 'e', 's', 't', 'a', '\0'};
 	cache_writeFile(&cache, f_name2, data2, 8, dirname, 1996);
@@ -776,24 +848,29 @@ int main(){
 
 	//cache = cache_dealloc(cache);
 	byte datax[4] = {'c', 'i', 'a', '\0'};
-	cache_appendToFile(&cache, f_name4, datax, 15, NULL, 1996);
+	cache_appendToFile(&cache, f_name4, datax, 4, NULL, 1996);
 
+	//cache_removeFile(&cache, f_name1, 1996);
 
-/*
 	byte* buf;
 	size_t dim_buf;
-	cache_readFile(cache, f_name1, &buf, &dim_buf);
+	cache_readFile(cache, f_name4, &buf, &dim_buf, 1996);
 	if(buf){
-		printf("leggo: %s\n", f_name1);
+		//printf("leggo: %s\n", f_name4);
 		for(int i = 0; i < dim_buf; i++)
 			printf("%c", buf[i]);
 		printf("\n");
 	}
+*/
+	file** array;
+	cache_readNFile(cache, 1, 1996, &array);
 
+	printf("file: %s\n", array[0]->f_name);
+
+/*
 	cache_readNFile(cache, 10, "file_letti", 1996);
 	cache_lockFile(cache, "file1", 1996);
 	cache_research(cache, "file2");
-	cache_removeFile(&cache, f_name3, 1996);
 	cache_removeFile(&cache, f_name4, 1997);
 */
 	
