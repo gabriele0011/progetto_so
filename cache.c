@@ -41,13 +41,12 @@ typedef struct _file
 //prototipi 
 void create_cache(int mem_size, int max_file_in_cache);
 
-static void cache_writeInDir(file* node, char* dirname);
+//static void cache_writeInDir(file* node, char* dirname);
 static file* cache_research(file* cache, char* f_name);
 static void cache_capacity_update(int dim_file);
 static int cache_duplicate_control(file* cache, char* f_name);
-//static file* replacement_algorithm(file* cache, size_t dim_f, char* dirname);
-static file* cache_enqueue(file** cache);
-static file* replacement_algorithm_append(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname);
+static int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f);
+static file* replacement_algorithm_append(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id);
 static file* replacement_algorithm_write(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id);
 
 
@@ -120,26 +119,29 @@ static void cache_capacity_update(int dim_file)
 {
 	mutex_lock(&mtx, "cache: lock fallita in cache_capacity_update");
 	used_mem = used_mem + dim_file;
-	files_in_cache++;
+	if(dim_file >0 ) files_in_cache++;
+	else files_in_cache--;
 	printf("cache used memory = %lu di %zu - files in cache = %zu\n", used_mem, cache_capacity, files_in_cache);
 	mutex_unlock(&mtx, "cache: unlock fallita in cache_capacity_update");
 }
 
 
-static file* replacement_algorithm_append(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
+static file* replacement_algorithm_append(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
 {
 	
+	printf("DEBUG: fino a qui tutto bene\n");
 	file* rep;
 	int found = 0;
 	file* node = NULL;
 	//caso cache vuota - utile?
-	mutex_lock(&((*cache)->mtx), "cache: lock fallita in replacement_algorithm");
+	mutex_lock(&mtx, "cache: lock fallita in replacement_algorithm");
 	if(*cache == NULL){
-		mutex_unlock(&((*cache)->mtx), "cache: unlock fallita in replacement_algorithm");
+		mutex_unlock(&mtx, "cache: unlock fallita in replacement_algorithm");
 		return NULL;
 	}
-
+	mutex_unlock(&mtx, "cache: unlock fallita in replacement_algorithm");
 	//caso cache con un elemento - append con rimpiazzo impossibile
+	mutex_lock(&((*cache)->mtx), "cache: lock fallita in replacement_algorithm");
 	if ((*cache)->next == NULL){
 		return NULL;
 	}else{
@@ -238,7 +240,7 @@ static file* replacement_algorithm_append(file** cache, char* f_name, byte* f_da
 	return rep;
 }
 
-static file* replacement_algorithm_write(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname)
+static file* replacement_algorithm_write(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
 {
 	//cerca nodo che rispetti condizione di rimpiazzo (size_old >= size_new)
 	//caso peggiore O(n), caso migliore O(1) (testa e coda sono invertite)
@@ -246,36 +248,57 @@ static file* replacement_algorithm_write(file** cache, char* f_name, byte* f_dat
 	
 	file* new;
 	new = (file*)malloc(sizeof(file));
+	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
+		LOG_ERR(errno, "cache: pthread_mutex_init fallita in cache_create_file");
+		free(new);
+		exit(EXIT_FAILURE);	
+	}
+	size_t len_f_name = strlen(f_name);
+	ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
+	strncpy(new->f_name, f_name, len_f_name);
+	new->f_size = dim_f;
+	ec_null((new->f_data = calloc(sizeof(byte), dim_f)), "cache: calloc cache_writeFile fallita");
+	for (int i = 0; i < dim_f; i++)
+		new->f_data[i] = f_data[i];
+	//mutex_unlock(&(new->mtx), "replacement_algorithm_write: unlock fallita (scrittura file)");
+
+	
 	file* rep;
 	int found = 0;
 
-
 	//caso cache vuota - utile?
-	mutex_lock(&((*cache)->mtx), "cache: lock fallita in replacement_algorithm");
+	mutex_lock(&mtx, "replacement_algorithm_write: lock fallita");
 	if(*cache == NULL){
-		mutex_unlock(&((*cache)->mtx), "cache: unlock fallita in replacement_algorithm");
+		mutex_unlock(&mtx, "replacement_algorithm_write: unlock fallita");
 		return NULL;
 	}
-
+	mutex_unlock(&mtx, "replacement_algorithm_write: unlock fallita");
+	
+	
+	
 	//caso cache con un elemento
+	mutex_lock(&((*cache)->mtx) , "replacement_algorithm_write: lock fallita");
 	if ((*cache)->next == NULL){
 		if((*cache)->f_size >= dim_f){
 			rep = *cache;
 			*cache = new;
 			found = 1;
-			mutex_unlock(&((*cache)->mtx), "cache: unlock fallita in replacement_algorithm");
+			mutex_unlock(&((*cache)->mtx), "replacement_algorithm_write: unlock fallita");
+			printf("DEBUG: rimpiazzo file: %s\n", (*cache)->f_name);
+
 		}else{
-			mutex_unlock(&((*cache)->mtx), "cache: unlock fallita in replacement_algorithm");
+			mutex_unlock(&((*cache)->mtx), "replacement_algorithm_write: unlock fallita");
 			free(new);
 			return NULL;
 		}
 	}else{
-		//caso coda con piu di due elementi
+		//caso coda con due o piu elementi
 		file* prev = *cache;
-		mutex_lock(&((*cache)->next->mtx), "cache: unlock fallita in replacement_algorithm");
+		mutex_lock(&((*cache)->next->mtx), "replacement_algorithm_write: unlock fallita !!");
 		file* curr = (*cache)->next;
+		//printf("DEBUG DEBUG DEBUG: fino a qui tutto bene\n");
 	
-		file* aux;
+		file* aux = prev;
 		while (curr->next != NULL){
 			if(prev->f_size >= dim_f && prev->f_lock == 0){
 				//trovato il nodo di rimpiazzo
@@ -292,23 +315,32 @@ static file* replacement_algorithm_write(file** cache, char* f_name, byte* f_dat
 			mutex_lock(&(curr->mtx), "cache: lock fallita in replacement_algorithm");
 			mutex_unlock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
 		}
-		//il nodo da rimpiazzare è prev?
-		if(prev->f_size >= dim_f && !found){
-			mutex_lock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
-			rep = prev;
-			found = 1;
-			aux->next = curr;
-			curr->next = new;
-			mutex_lock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
+		//il nodo da rimpiazzare è prev
+		if(prev->f_size >= dim_f && !found && prev->f_lock == 0){
+			//se prev è il primo elemento della lista
+			if(aux == prev){
+				//printf("DEBUG: rimpiazzo primo elem: %s\n", prev->f_name);
+				rep = prev;
+				*cache = curr;
+				curr->next = new;
+				found = 1;
+			//prev sta tra aux e curr
+			}else{
+				mutex_lock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
+				//printf("DEBUG: rimpiazzo in mezzo: %s\n", prev->f_name);
+				rep = prev;
+				aux->next = curr;
+				curr->next = new;
+				mutex_unlock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
+				found = 1;
+			}
 		}else{
 			//il nodo da rimpiazzare è curr?
-			if(curr->next == NULL && curr->f_size >= dim_f && !found && curr->f_lock == 0){
+			if(curr->f_size >= dim_f && !found && curr->f_lock == 0){
+				//printf("DEBUG: rimpiazzo ultimo: %s\n", curr->f_name);
 				rep = curr;
 				prev->next = new;
 				found = 1;
-			}else{
-				// se non è gia stato fissato, collego new alla vecchia testa curr
-				curr->next = new;
 			}
 		}
 		mutex_unlock(&(prev->mtx), "cache: unlock fallita in replacement_algorithm");
@@ -316,23 +348,12 @@ static file* replacement_algorithm_write(file** cache, char* f_name, byte* f_dat
 	}
 	
 	//ho trovato un rimpiazzo -> setta il nuovo elemento in testa
-	if(found){
-		mutex_lock(&(new->mtx), "cache: unlock fallita in replacement_algorithm");
-		size_t len_f_name = strlen(f_name);
-		ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
-		strncpy(new->f_name, f_name, len_f_name);
-		new->f_size = dim_f;
-		ec_null((new->f_data = calloc(sizeof(byte), dim_f)), "cache: calloc cache_writeFile fallita");
-		for (int i = 0; i < dim_f; i++)
-			new->f_data[i] = f_data[i];
-		mutex_unlock(&(new->mtx), "cache: unlock fallita in replacement_algorithm");
-		cache_capacity_update(-(rep->f_size));
-		cache_capacity_update(dim_f);
-
-	}else{
+	if(!found){
 		free(new);
 		return NULL;
 	}
+	cache_capacity_update(-(rep->f_size));
+	cache_capacity_update(dim_f);
 	return rep;
 }
 
@@ -356,37 +377,34 @@ static int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f)
 		free(new);
 		exit(EXIT_FAILURE);	
 	}
-	//collocazione nodo
 
+	//collocazione nodo
+	
+	mutex_lock(&mtx, "cache: lock fallita in cache_enqueue");
 	//caso 1: cache vuota
-	mutex_lock((&mtx), "cache: lock fallita in cache_enqueue");
 	if (*cache == NULL){
 		(*cache) = new;
-		mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
+		mutex_unlock(&mtx, "cache: unlock fallita in cache_enqueue");
 		return 0;
 	}
-	//caso cache con un elemento
-	mutex_lock((&mtx), "cache: lock fallita in cache_enqueue");
+	//caso 2: un elemento
 	if((*cache)->next == NULL){
 		(*cache)->next = new;
 		mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
 		return 0;
 	}
+	mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
 
 	//caso cache non vuota con almeno due elementi: 
 	//collacazione nodo in testa (alla fine della lista)
-	mutex_lock(&((*cache)->mtx), "cache: lock fallita in cache_enqueue");
+	mutex_lock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");
 	file* prev = *cache;
 	mutex_lock(&((*cache)->next->mtx), "cache: unlock fallita in cache_enqueue");
 	file* curr = (*cache)->next;
 
 	file* aux;
-	while (curr->next != NULL){
+	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
 		//controllo duplicato
-		if(strcmp(prev->f_name, f_name) == 0){
-			printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
-			return -1;
-		}
 		aux = prev;
 		prev = curr;
 		curr = curr->next;
@@ -394,16 +412,57 @@ static int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f)
 		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_enqueue");
 
 	}
-	if(curr->next == NULL && strcmp(curr->f_name, f_name) == 0){
+	int x = 0;
+	//(!) ricontrolla mutex
+	if(strcmp(prev->f_name, f_name) == 0){
 		printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
 		free(new);
-		return -1;
+		x = -1;
+	}else{
+		if(strcmp(curr->f_name, f_name) == 0){
+			printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
+			free(new);
+			x = -1;
+		}else{
+			curr->next = new;
+		}
 	}
-	curr->next = new;
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_enqueue");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_enqueue");
+	return x;
+}
+int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
+{	
+	printf("DEBUG: scrittura %s (%zu byte)... \n", f_name, dim_f);	
+	
+	//controllo preliminare 1: memoria sufficiente?
+	if (cache_capacity < dim_f){
+		LOG_ERR(-1, "cache_writeFile: dimensione file maggiore della capacità della cache");
+		return -1;
+	}
+
+	file* node_rep = NULL; //ptr al nodo eventualmente rimpiazzato
+	if (used_mem+dim_f > cache_capacity){
+		//capienza non sufficiente ->rimpiazzo
+		printf("(!) memoria insufficiente, rimpiazzo necessario\n");
+		if ((node_rep = replacement_algorithm_write(cache, f_name, f_data, dim_f, dirname, id)) == NULL){  //se lo trova deve anche scriverlo!
+			printf("cache_writeFile: rimpiazzo impossibile, scrittura fallita\n");
+			return -1;
+		}else{
+			printf("DEBUG: scrittura avvenuta con rimpiazzo\n");
+			return 0;
+		}
+	}
+	//normale scrittura in cache tramite enqueue
+	if (cache_enqueue(cache, f_name, f_data, dim_f) == -1){
+		LOG_ERR(-1, "cache_writeFile: enqueue fallita");
+		exit(EXIT_FAILURE);
+	}
+	printf("DEBUG: scrittura avvenuta\n");
+	cache_capacity_update(dim_f);
 	return 0;
 }
+
 
 int cache_lockFile(file* cache, char* f_name, int id)
 {
@@ -501,36 +560,6 @@ int cache_removeFile(file** cache, char* f_name, int id)
 	return x;
 }
 
-int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
-{	
-	printf("DEBUG: scrittura %s (%zu byte)... \n", f_name, dim_f);	
-	
-	//controllo preliminare 1: memoria sufficiente?
-	if (cache_capacity < dim_f){
-		LOG_ERR(-1, "cache: dimensione file maggiore della capacità della cache");
-		return -1;
-	}
-
-	file* node_rep = NULL; //ptr al nodo eventualmente rimpiazzato
-	if (used_mem+dim_f > cache_capacity){
-		//capienza non sufficiente ->rimpiazzo
-		printf("(!) memoria insufficiente, rimpiazzo necessario\n");
-		if (node_rep = replacement_algorithm_write(*cache, f_name, f_data, dim_f, dirname, id) == NULL){  //se lo trova deve anche scriverlo!
-			printf("cache: rimpiazzo impossibile, scrittura fallita\n");
-			return -1;
-		}else{
-			printf("DEBUG: file scritto con rimpiazzo\n");
-			return 0;
-		}
-	}
-	//normale scrittura in cache tramite enqueue
-	if (cache_enqueue(cache, f_name, f_data, dim_f) == -1){
-		LOG_ERR(-1, "cache_writeFile: enqueue fallita");
-		exit(EXIT_FAILURE);
-	}
-	cache_capacity_update(dim_f);
-	return 0;
-}
 
 
 int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
@@ -548,9 +577,9 @@ int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, c
 	}
 
 	//controllo capacità memoria
-	if((used_mem+dim_f > cache_capacity) == -1){
+	if(used_mem+dim_f > cache_capacity){
 		file* temp;
-		if((temp = replacement_algorithm_append(*cache, f_name, f_data, dim_f, dirname)) != NULL){
+		if((temp = replacement_algorithm_append(cache, f_name, f_data, dim_f, dirname, id)) != NULL){
 				printf("cache: cache_removeFile fallita\n");
 				return -1;
 		}else{
@@ -605,7 +634,7 @@ int cache_readNFile(file* cache, size_t N, char* dirname, int id)
 	size_t scan = 0;
 	while (curr->next != NULL && N > 0 ){
 		if(prev->f_lock == 0 || prev->f_lock == id)
-			cache_writeInDir(prev, dirname);
+			//cache_writeInDir(prev, dirname);
 		aux = prev;
 		prev = curr;
 		curr = curr->next;
@@ -617,11 +646,11 @@ int cache_readNFile(file* cache, size_t N, char* dirname, int id)
 	}
 	if(curr->next == NULL){
 		if (--N > 0 && (prev->f_lock == 0 || prev->f_lock == id)){
-			cache_writeInDir(prev, dirname);
+			//cache_writeInDir(prev, dirname);
 			scan++;
 		}
 		if(--N > 0 && (curr->f_lock == 0 || curr->f_lock == id) ){
-			cache_writeInDir(curr, dirname);
+			//cache_writeInDir(curr, dirname);
 			scan++;
 		}
 	}
@@ -666,38 +695,41 @@ file* cache_dealloc(file* cache)
 
 void print_queue(file* cache)
 {
-	while(cache != NULL){
+	if(cache != NULL){
 		printf("%s ", cache->f_name);
-		cache = cache->next;
+		print_queue(cache = cache->next);
+	}else{
+		printf("\n");
 	}
-	printf("\n");
 }
 
 int main(){
 
 	file* cache = NULL;
-	create_cache(100, 50);
+	create_cache(19, 50);
 	char dirname[4] = {'a', 'g', 'o', '\0'};
 
 	char f_name1[6] = {'f', 'i', 'l', 'e', '1', '\0'};
-	byte data1[4] = {'c', 'i', 'a', '\0'};
-	cache_writeFile(&cache, f_name1, data1, 4, dirname, 1996);
-	//print_queue(cache);
+	byte data1[6] = {'c', 'i', 'a','c', 'i', '\0'};
+	cache_writeFile(&cache, f_name1, data1, 6, dirname, 1996);
+	print_queue(cache);
 
 	char f_name2[6] = {'f', 'i', 'l', 'e', '2', '\0'};
 	byte data2[8] = {'c', 'o', 'm', 'e', 's', 't', 'a', '\0'};
 	cache_writeFile(&cache, f_name2, data2, 8, dirname, 1996);
-	//print_queue(cache);
+	print_queue(cache);
 
 	char f_name3[6] = {'f', 'i', 'l', 'e', '3', '\0'};
 	byte data3[5] = {'s', 't', 'a', 'i', '\0'};
 	cache_writeFile(&cache, f_name3, data3, 5, dirname, 1996);
+	print_queue(cache);
+
 
 	char f_name4[6] = {'f', 'i', 'l', 'e', '4', '\0'};
-	byte data4[5] = {'s', 't', 'a', 'i', '\0'};
-	cache_writeFile(&cache, f_name4, data4, 5, NULL, 1996);
-	
-	cache = cache_dealloc(cache);
+	byte data4[8] = {'s', 't', 'a', 'i','s', 't', 'a', '\0'};
+	cache_writeFile(&cache, f_name4, data4, 8, NULL, 1996);
+	print_queue(cache);
+	//cache = cache_dealloc(cache);
 /*
 	byte datax[4] = {'c', 'i', 'a', '\0'};
 	cache_appendToFile(&cache, f_name3, datax, 4, NULL, 0);
