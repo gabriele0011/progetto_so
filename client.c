@@ -1,26 +1,31 @@
 
 /*
-1. implementare lista dei file aperti e procedura di chiusura quando il client si disconnette
-2. rivedi tipi variabili globali
+-> implementare lista dei file aperti e procedura di chiusura quando il client si disconnette
+-> rivedi tipi variabili globali
+-> controlla l'errore sulle directory lato server 
+-> timespec va nel file header del client
 */
+
 #include "err_control.h"
 #include "function_c.h"
-
-//variabili globali
-int flag_D = 0;
-int flag_d = 0;
-int flag_p = 0;
-int flag_rR = 0;
-int flag_wW = 0;
-size_t time_r = 0;
-int flag_h = 0;
-char *socket_name = NULL;
-char* arg_d = NULL;
-char* arg_D = NULL;
-int fd_skt = -1;
+typedef unsigned char byte;
 #define O_CREATE 10
 #define O_LOCK 11
 enum { NS_PER_SECOND = 1000000000 };
+
+//variabili globali
+byte flag_D = 0;
+byte flag_d = 0;
+byte flag_p = 0;
+byte flag_rR = 0;
+byte flag_wW = 0;
+byte flag_h = 0;
+char* arg_d = NULL; //liberare questa memoria o allocarla dinamicamente (!)
+char* arg_D = NULL;
+unsigned sleep_time = 0; 
+int fd_sk; // = -1;
+char *socket_name = NULL;
+
 
 static void case_h();
 static long isNumber(const char* s);
@@ -41,7 +46,6 @@ static void set_socket(const char* socket_name);
 //prototipi
 int openConnection(const char* sockname, int msec, const struct timespec abstime);
 int openFile(const char* sockaname, int flags);
-
 int closeConnection(const char* sockname){return 0;};
 int readFile(const char* f_name, void** buf, size_t* size){return 0;};
 int readNFiles(int n, const char* dirname ){return 0;};
@@ -75,34 +79,11 @@ static int is_directory(const char *path)
     return S_ISDIR(path_stat.st_mode);
 }
 
-////////////////// case_h //////////////////
-static void case_h()
-{
-	int fd;
-	ec_meno1((fd = open("help.txt", O_RDONLY)), "errore open in case_h");
-	
-	struct stat path_stat;
-    	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
-
-    	//allocazione buf[size]
-    	size_t file_size = path_stat.st_size;
-    	char* buf;
- 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
-	
- 	//lettura file + scrittura del buf
- 	ec_meno1(read(fd, buf, file_size), "read");
- 	//stampa buf
- 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
-	 //DEBUG: carattere di terminazione presente nel file txt?
-
- 	ec_meno1(close(fd), "errore close in append_file");
- 	if(!buf) free(buf);
-}
 
 ////////////////// case_W //////////////////
 static void case_W (char* arg_W)
 {
-	//(!)problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
+	//(!) problema: per ogni parola tokenizzata va effettuata una richiesta di scrittura al server
 	//si puo gestire direttamente da qui?
 	//rivaluta dopo l'implementazione dell'API
 
@@ -134,7 +115,6 @@ static void case_r (char* arg_r)
 		token = strtok_r(NULL, ",", &save);
 	}
 }
-
 
 ////////////////// append_file //////////////////
 static int append_file(const char* f_name)
@@ -208,20 +188,6 @@ static void case_c(char* arg_c)
 	}
 }
 
-////////////////// set_socket //////////////////
-static void set_socket(const char* socket_name)
-{
-	//setting parametri di connessione
-	double rec_time = 1000; //tempo di riconnessione ogni 1 sec = 1/1000 msec
-	struct timespec abstime;
-	abstime.tv_sec = 10; //tempo assoluto 10 secondi
-
-	//open connection
-   	if(openConnection(socket_name, rec_time, abstime) == -1){
-    	LOG_ERR(errno, "client: -f tentativo di connessione non riuscito");
-    	exit(EXIT_FAILURE);
-    }
-}
 
 ////////////////// write_request //////////////////
 static int writeFile_request(const char* f_name)
@@ -303,6 +269,50 @@ static void case_w(char* arg_w)
 		visitFolder_sendRequest(dirname, &x);
 }
 
+////////////////// set_socket //////////////////
+static void set_socket(const char* socket_name)
+{
+	//necessario effettuare un controllo sulla stringa socket_name?
+	//deve avere una dimensione specifica?
+
+	//setting parametri di connessione
+	double rec_time = 1000; //tempo di riconnessione ogni 1 sec = 1/1000 msec
+	struct timespec abstime;
+	abstime.tv_sec = 10; //tempo assoluto 10 secondi
+
+	//open connection
+   	if(openConnection(socket_name, rec_time, abstime) == -1){
+    	LOG_ERR(errno, "client: -f tentativo di connessione non riuscito");
+    	exit(EXIT_FAILURE);
+    }
+}
+
+////////////////// case_h ////////////////// 
+static void case_h()
+{
+	int fd;
+	ec_meno1((fd = open("help.txt", O_RDONLY)), "errore f. open in case_h");
+	
+	//struttura per acquisire informazioni sul file
+	struct stat path_stat;
+	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
+
+    //allocazione buf[size] per la dimensione del file in byte
+    size_t file_size = path_stat.st_size;
+    char* buf;
+ 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_file");
+	
+ 	//lettura file + scrittura del buf
+ 	ec_meno1(read(fd, buf, file_size), "read");
+ 	
+	//stampa buf
+ 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
+	//DEBUG: carattere di terminazione presente nel file txt?
+
+ 	ec_meno1(close(fd), "errore close in append_file");
+ 	if(!buf) free(buf);
+}
+
 ////////////////// parser //////////////////
 static void parser(int dim, char** array){
 
@@ -324,7 +334,7 @@ static void parser(int dim, char** array){
 			//argomento obbligatorio
 			if (is_argument(array[i+1])){ 
 				socket_name = array[++i];
-				printf("socket name acquisito: %s\n", socket_name);
+				printf("client:DEBUG: socket name acquisito: %s\n", socket_name);
 				set_socket(socket_name);
 			}else{ 
 				LOG_ERR(EINVAL, "client: argomento -f mancante");
@@ -333,9 +343,9 @@ static void parser(int dim, char** array){
 		}
 		//CASO -t
 		if (is_opt(array[i], "-t")) {
-			if ( !is_argument(array[i+1]) ) time_r = 0;
-			else ec_meno1( (time_r = isNumber(array[++i])), "client: argomento -t errato");
-			printf("DEBUG: time_r = %zu\n", time_r);
+			if ( !is_argument(array[i+1]) ) sleep_time = 0;
+			else ec_meno1( (sleep_time = isNumber(array[++i])), "client: argomento -t errato");
+			printf("DEBUG: time_r = %d\n", sleep_time);
 		}	
 		//CASO -p
 		if (is_opt(array[i], "-p")){
@@ -366,7 +376,6 @@ static void parser(int dim, char** array){
 	//CICLO 2: si gestiscono i comandi di richiesta al server -w, -W, -R, -r, -l, -u, -c
 	i = 0;
 	while (++i < dim){	
-
 		//CASO -w
 		if (is_opt(array[i], "-w")) {		
 			if (is_argument(array[i+1])) {
@@ -375,8 +384,7 @@ static void parser(int dim, char** array){
 				LOG_ERR(EINVAL, "argomento mancante -w");
 				exit(EXIT_FAILURE);
 			}	
-		}
-		
+		}		
 		//CASO -W
 		if (is_opt(array[i], "-W")) {	
 			if (is_argument(array[i+1])){
@@ -385,8 +393,7 @@ static void parser(int dim, char** array){
 				LOG_ERR(EINVAL, "argomento -W mancante");
 				exit(EXIT_FAILURE);
 			}
-		}
-		
+		}		
 		//CASO -r
 		if (is_opt(array[i], "-r")) {
 			if (is_argument(array[i+1])) {
@@ -398,7 +405,6 @@ static void parser(int dim, char** array){
 				exit(EXIT_FAILURE);
 			}
 		}
-	
 		//CASO -R
 		if (is_opt(array[i], "-R")){
 			//puoi chiamare readfile o readnfile rispetto al paramentro n che riceve
@@ -417,14 +423,6 @@ static void parser(int dim, char** array){
 			}
 
 		}
-
-		//CASO -t
-		if (is_opt(array[i], "-t")){
-			//default: time_r=0 altrimenti time_r = x
-			if (is_argument(array[i+1]))
-				ec_meno1((time_r = isNumber(array[i+1])), "errore: arg. -w n non intero\n");
-		}
-
 		//CASO -l
 		if (is_opt(array[i], "-l")){
 			if (is_argument(array[i+1])){
@@ -435,7 +433,6 @@ static void parser(int dim, char** array){
 				exit(EXIT_FAILURE);
 			}
 		}
-
 		//CASO -u
 		if (is_opt(array[i], "-u")){
 			if (is_argument(array[i+1])){
@@ -446,7 +443,6 @@ static void parser(int dim, char** array){
 				exit(EXIT_FAILURE);
 			}
 		}
-
 		//CASO -c
 		if (is_opt(array[i], "-c")){
 			if (is_argument(array[i+1])){
@@ -457,7 +453,11 @@ static void parser(int dim, char** array){
 				exit(EXIT_FAILURE);
 			}
 		}
-		
+		//tempo di attesa tra una richiesta e l'altra
+		if(sleep_time != 0) {
+			sleep_time = sleep_time/1000;  //conversione da millisecondi a microsecondi
+			usleep(sleep_time);
+		}
 	}
 }
 
@@ -469,13 +469,14 @@ int main(int argc, char* argv[]){
 		LOG_ERR(EINVAL, "errore su argomenti\n");
 		exit(EXIT_FAILURE);
 	}
-	
 	//parser
 	parser(argc, argv);
-	printf("DEBUG: test3");
 	return 0;
 }
 
+
+/************************ API CLIENT ************************/
+//procedura tempo trascorso tra t1,t2
 void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td)
 {
     td->tv_nsec = t2.tv_nsec - t1.tv_nsec;
@@ -491,42 +492,49 @@ void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td)
         td->tv_sec++;
     }
 }
-//API CLIENT
+
 int openConnection(const char* sockname, int msec, const struct timespec abstime)
 {
-	//controllo stringa socket_name non completo (!)
+	//controllo validità socket_name
 	if(socket_name == NULL) return -1;
 
-	//preleva tempo iniziale time 1, tempo intermedio time2 e tempo trascorso delta
+	//timer setting
+	msec = msec/1000; //conversione da millisecondi a microsecondi per la usleep
 	struct timespec time1, time2, delta;
-    ec_meno1(clock_gettime(CLOCK_REALTIME, &time1), "client: clock_gettime fallita");
-	msec = msec/1000; //conversione da millisecondi a secondi per la sleep
+      ec_meno1(clock_gettime(CLOCK_REALTIME, &time1), "client: clock_gettime fallita");
 
-    //socket setting
-    struct sockaddr_un sa;
-	strcpy(sa.sun_path, sockname);
-	printf("DEBUG: sockename: %s\n", sockname);
+       //socket setting
+      struct sockaddr_un sa;
+	strncpy(sa.sun_path, sockname, strlen(socket_name));
 	sa.sun_family = AF_UNIX;
-    fd_skt = socket(AF_UNIX, SOCK_STREAM, 0);
-
-	//ciclo di connessione - possibile controllo abstime nella guardia
-    while(connect(fd_skt, (struct sockaddr*)&sa, sizeof(sa)) == -1){
-    	if(errno == ENOENT){
-			sleep(msec);
+    
+	fd_sk = socket(AF_UNIX, SOCK_STREAM, 0); 
+	printf("fd_socket client = %d\n", fd_sk);
+	
+	//ciclo di connessione
+      while(connect(fd_sk, (struct sockaddr*)&sa, sizeof(sa)) == -1){
+    	      if(errno == ENOENT){
+			usleep(msec);
 			//seconda misurazione
 			ec_meno1(clock_gettime(CLOCK_REALTIME, &time2), "client: clock_gettime fallita");
 			//calcola tempo trascorso tra time1 e time2 in delta
 			sub_timespec(time1, time2, &delta);
+			//controllo che non si sia superato il tempo assoluto dal primo tentativo di connessione
 			if( (delta.tv_nsec >= abstime.tv_nsec && delta.tv_sec >= abstime.tv_sec) || delta.tv_sec >= abstime.tv_sec){
-				printf("DEBUG: abstime scaduto, connessione fallita\n");
+				printf("APIclient.OpenConnection: abstime scaduto, connessione fallita\n");
 				return -1;
 			}
        	}
-    	else return -1; 
-    }
-	if(fd_skt != -1) printf("DEBUG: connessione con server stabilita\n");
-   	printf("DEBUG: fd_client = %d\n", fd_skt);
-    return 0;
+      	else return -1; 
+      }
+	//write(fd_sk, "hello!", 6);
+      //size_t N = 100;
+      //char buf[N];
+      //read(fd_sk, buf, N);
+	//close(fd_skt);
+	//if(fd_skt != -1) printf("DEBUG: connessione con server stabilita\n");
+   	//printf("DEBUG: fd_client = %d\n", fd_skt);
+      return 0;
 }
 
 int openFile(const char* pathname, int flags)
@@ -537,39 +545,35 @@ int openFile(const char* pathname, int flags)
 	//comunica il tipo di richiesta al server
 	// 1 per OpenFile
 	*buf = 1;
-	ec_meno1(write(fd_skt, buf, sizeof(int)), "client: write fallita");
+	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
 	//if(buf != 0) return -1;
 
 	*buf = 0;
-	ec_meno1(read(fd_skt, buf, sizeof(int)), "client: read fallita");
+	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 	if(buf != 0) return -1;
 
 	//invia lunghezza pathname
 	int len = strlen(pathname);
 	*buf = len;
-	ec_meno1(write(fd_skt, buf, sizeof(int)), "client: write fallita");
+	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
 	
-	ec_meno1(read(fd_skt, buf, sizeof(int)), "client: read fallita");
+	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 	if(buf != 0) return -1;
 
 	
 	//invia pathname
-	ec_meno1(write(fd_skt, pathname, sizeof(int)), "client: write fallita");
-	ec_meno1(read(fd_skt, buf, sizeof(int)), "client: read fallita");
+	ec_meno1(write(fd_sk, pathname, sizeof(int)), "client: write fallita");
+	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 	if(buf != 0) return -1;
 
 
 	//invia flags
 	*buf = flags;
-	ec_meno1(write(fd_skt, buf, sizeof(int)), "client: write fallita");
-	ec_meno1(read(fd_skt, buf, sizeof(int)), "client: read fallita");
+	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
+	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 	if(buf != 0) return -1;
 
 	printf("ho inviato al server pathname e flags\n");
 
 	return 0;
 }
-
-
-
-
