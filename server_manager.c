@@ -14,8 +14,7 @@ static int worker_lockFile(int x){return 0;}
 static int worker_unlockFile(int x){return 0;}
 static int worker_removeFile(int x){return 0;}
 
-
-/*********** read_config_file ***********/
+/*_____________________ read_config_file _____________________*/
 int read_config_file(char* f_name)
 {
 	//apertura del fine
@@ -70,15 +69,17 @@ int read_config_file(char* f_name)
 	return 0;
 }
 
-//handlers segnali di terminazione
+/*_____________________ handlers segnali di terminazione _____________________*/
+//forse ne manca uno
 static void handler_sigintquit(int signum){
 	sig_intquit = 1;
 }
-
 static void handler_sighup(int signum){
 	sig_hup = 1;
 }
 
+
+//DEBUG
 //start function thread di prova
 void* start_func2(void *arg){
       printf("start_func2 debug\n");
@@ -215,7 +216,7 @@ int main(int argc, char* argv[])
 							if(enqueue(&conc_queue, fd) == -1){ LOG_ERR(err, "server_manager: enqueue fallita"); break; }
 							//segnale
 							if ((err = pthread_cond_signal(&cv)) == -1){ LOG_ERR(err, "server_manager: signal error"); break; }
-							printf("nuova richiesta da %d inserita in coda\n",fd );
+							printf("nuovo fd client (%d) da cui si attende richiesta inserito in coda\n",fd );
 							//unlock
 							mutex_unlock(&g_mtx, "server_manager: unlock fallita");
 							
@@ -256,8 +257,6 @@ int main(int argc, char* argv[])
 	
 	return 0;
 }
-
-
 void* start_func(void *arg)
 {
 	int* buf = NULL;
@@ -283,16 +282,17 @@ void* start_func(void *arg)
             
             //salvo il client
 		fd_c = *buf;
-		*buf = 0;
-            printf("DEBUG.start_func: buf dequeue = %d\n", *buf); //DEBUG DEBUG DEBUG
+		//ripristino buf
+            *buf = 0;
 
-		//leggi la richiesta dal client
+		//leggi la richiesta di fd_c
 		if (read(fd_c, buf, sizeof(int)) == -1){
 			LOG_ERR(-1, "start_func: read su client");
 			*buf = 0;
 		}
 
 		op = *buf;
+            printf("DEBUG.start_func: op = %d\n", op); //DEBUG DEBUG DEBUG
 
             //DEBUG: cosa accade se op == EOF? si entra comunque nel caso default dello switch?
 		
@@ -429,39 +429,68 @@ void* start_func(void *arg)
 	pthread_exit((void*)0);
 }
 
-static int worker_openFile(int fd_client)
+
+
+/*_____________________ SERVER_WORKER _____________________*/
+
+//OPEN FILE
+static int worker_openFile(int fd_c)
 {
-	int* buf = malloc(sizeof(int));
+	int* buf;
+    ec_null( (buf = malloc(sizeof(int))), "server_worker: malloc fallita");
+    *buf = 0;
 	char* pathname;
 	size_t len_pathname;
 	int flags;
-
-	*buf = 0;
-	//avviso richiesta accettata al client 
-	ec_meno1(write(fd_client, buf, sizeof(int)), "server_worker: write fallita");
 	
-	//lettura della lunghezza del pathname
-	ec_meno1(read(fd_client, buf, sizeof(int)), "server_worker: read fallita");
-	len_pathname = *buf;
-	*buf = 0;
-	ec_meno1(write(fd_client, buf, sizeof(int)), "server_worker: write fallita");	
+	//SETTING RICHIESTA
+    //2 comunica: richiesta openFile (1) accettata
+	*buf = 1;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+	
+	// comunicazione stabilita OK
+	// acquisizione dati richiesta dal client
 
+	//LEN PATHNAME
+	//5 riceve: lunghezza del pathname
+	ec_meno1(read(fd_c, buf, sizeof(int)), "server_worker: read fallita");
+	len_pathname = *buf;
+	//6 risponde: ricevuto lunghezza pathname
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");	
+
+	//PATHNAME
 	//allocazione mem pathname
 	ec_null((pathname = calloc(sizeof(char), ++len_pathname)), "server_worker: calloc fallita");
 	memset(pathname, '\0', sizeof(char)*len_pathname);
-
-	//lettura pathname
-	read(fd_client, pathname, sizeof(char)*(len_pathname-1));
+	//9 riceve: pathname
+	read(fd_c, pathname, sizeof(char)*(len_pathname-1));
+	//10 comunica: ricevuto pathname
 	*buf = 0;
-	ec_meno1(write(fd_client, buf, sizeof(int)), "server_worker: write fallita");
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 
-	//lettura flags
-	read(fd_client, buf, sizeof(char)*(len_pathname-1));
+	//FLAGS
+	//13 riceve: flags
+	read(fd_c, buf, sizeof(char)*(len_pathname-1));
 	flags = *buf;
+	//14 comunica: recevuti flags
 	*buf = 0;
-	ec_meno1(write(fd_client, buf, sizeof(int)), "server_worker: write fallita");
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+
+      // dati richiesta acquisiti
+      
+      // da questo punto in poi:
+      // 1. controllare se il file esiste
+      // 2. se esiste controllare se è lockato
+      // 3. confrontare le due interrogazioni con i flag immessi dal client
+      // casistiche: 
+      // CASO 1:  se O_CREATE|O_LOCK -> se esiste o è lockato -> errore
+      //          else creazione di un nuovo file
+      // CASO 2:  se O_LOCK (senza O_CREATE) -> se non esiste o è lockato -> errore
+      //          else                   
+
+
 
 	printf("pathname: %s flags = %d\n", pathname, flags);
 	return 0;
 }
-
