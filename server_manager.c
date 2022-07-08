@@ -444,7 +444,7 @@ static int worker_openFile(int fd_c)
 	int flags;
 	
 	//SETTING RICHIESTA
-    //2 comunica: richiesta openFile (1) accettata
+      //2 comunica: richiesta openFile (1) accettata
 	*buf = 1;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	
@@ -477,8 +477,15 @@ static int worker_openFile(int fd_c)
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 
-      // dati richiesta acquisiti
-      
+	//IDENTIFICAZIONE PROCESSO CLIENT
+	//17 riceve: pid
+	read(fd_c, buf, sizeof(char)*(len_pathname-1));
+	int id = *buf;
+	//18 comunica: recevuti flags
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+
+
       // da questo punto in poi:
       // 1. controllare se il file esiste
       // 2. se esiste controllare se è lockato
@@ -487,9 +494,46 @@ static int worker_openFile(int fd_c)
       // CASO 1:  se O_CREATE|O_LOCK -> se esiste o è lockato -> errore
       //          else creazione di un nuovo file
       // CASO 2:  se O_LOCK (senza O_CREATE) -> se non esiste o è lockato -> errore
-      //          else                   
+      //          else   ...                
 
+	size_t file_exist = 0;
+	size_t file_notlocked = 0;
+	file* f;
 
+	//se il file f esiste setta var
+	if((f = cache_research(cache, pathname)) != NULL) file_exist = 1;
+	//se il file f esiste e non è lockato setta var
+	if(f != NULL && f->f_lock == 0 ) file_notlocked = 1;
+
+	//gestione dei flag
+	
+	//casi di errore
+      //O_CREATE => !file_exist
+	if ((flag = O_CREATE|O_LOCK) && file_exist){
+            LOG_ERR(ENOENT, "file esistente, flag O_CREATE attivo");
+            return -1;
+      }
+      //O_LOCK => file_exist
+	if ((flag = O_LOCK) && !file_exist ){
+            LOG_ERR(ENOENT, "file non esistente, flag O_CREATE mancante");
+            return -1;
+      }
+      //file lockato da un altro processo
+      if ((flag = O_LOCK) && (!file_notlocked || f->f_lock != id ){
+            LOG_ERR(ENOENT, "file lockato da un altro processo");
+            return -1;
+      }
+
+      //casi ok
+      //se presente O_CREATE
+	if ((flag = O_CREATE|O_LOCK) && !file_exist){ 
+            //crezione del file in lock
+            //la writeFile chiamata dal client si occuperà di creare
+            return 0;
+
+      if (flag = O_LOCK && file_notlocked){
+            //apertura del file in lock
+      }
 
 	printf("pathname: %s flags = %d\n", pathname, flags);
 	return 0;

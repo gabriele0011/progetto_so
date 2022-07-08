@@ -592,10 +592,16 @@ int openFile(const char* pathname, int flags)
       ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 	if(buf != 0) return -1;
 
-	printf("ho inviato al server pathname e flags\n");
+      //IDENTIFICAZIONE PROCESSO
+      int id = getpid();
+      //16 comunica: pid
+      *buf = id;
+	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
+      //19 riceve: conferma ricezione pid
+      ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
+	if(buf != 0) return -1;
 
       //ORA? ASPETTO CHE ELABORI LA RICHIESTA E CHE RITORNI L'ESITO
-
-
-	return 0;
+	
+      return 0;
 }
