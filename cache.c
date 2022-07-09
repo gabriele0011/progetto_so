@@ -2,7 +2,7 @@
 
 // DOMANDA
 // la gestione della memoria della cache deve tener conto del numero di file memorizzabili aldilà della capacità? Ad esempio, se si possono salvare 10 file, non avendo
-// superato al capacità massima, volendo aggiungere un altro file avendo spazio a disposizione, dovrei comunque espellere dei file? o la gestione si limita alla capacità?
+// superato al capacità massima, volendo aggiungere un altro file avendo spazio a disposizione, dovrei comunque espellere dei file? o la gestione si limita alla  capacità?
 
 
 //funzioni cache 
@@ -61,8 +61,7 @@ void cache_capacity_update(int dim_file)
 {
 	mutex_lock(&mtx, "cache: lock fallita in cache_capacity_update");
 	used_mem = used_mem + dim_file;
-	if (dim_file > 0 ) files_in_cache++;
-	else files_in_cache--;
+	files_in_cache++;
 	printf("cache used memory = %lu di %zu - files in cache = %zu\n", used_mem, cache_capacity, files_in_cache);
 	mutex_unlock(&mtx, "cache: unlock fallita in cache_capacity_update");
 }
@@ -156,7 +155,283 @@ int cache_removeFile(file** cache, char* f_name, int id)
 	return x;
 }
 
-//algoritmi di rimpiazzo
+//scrittura di un file in cache -> composta da cache_writeFile(controlla la capacità della cache) + cache_enqueue(crea effettiv. il file)
+int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id, int flag)
+{	
+      // flag = 0 per openFile
+      // flag = 1 per writeFile
+	printf("DEBUG: scrittura %s (%zu byte)... \n", f_name, dim_f);	
+	
+      //CONTROLLO PRELIMINARE
+	if (cache_capacity < dim_f){
+		LOG_ERR(-1, "cache_writeFile: dimensione file maggiore della capacità della cache");
+		return -1;
+	}
+
+      //INSERIMENTO CON RIMPIAZZO -> gestire puntatore del file rimpiazzato
+	file* node_rep = NULL; //ptr al nodo eventualmente rimpiazzato
+	
+      if (used_mem+dim_f > cache_capacity || files_in_cache+1 > max_file_in_cache){
+		printf("rimpiazzo necessario\n");
+		if ((node_rep = replacement_algorithm_write(cache, f_name, f_data, dim_f, dirname, id)) == NULL){
+			printf("cache_writeFile: scrittura di %s (%zu) fallita\n", f_name, dim_f);
+			return -1;
+            }
+            printf("DEBUG: scrittura %s eseguita con rimpiazzo di %s\n", f_name, node_rep->f_name);
+	}
+
+	//INSERIMENTO SENZA RIMPIAZZO
+	if (cache_enqueue(cache, f_name, f_data, dim_f, id) == -1){
+		LOG_ERR(-1, "cache_writeFile: enqueue fallita");
+		return -1;
+	}
+	printf("DEBUG: scrittura %s eseguita\n", f_name);
+	
+      //openFile -> aggiornamento dimensione cache
+      if(flag = 1) cache_capacity_update(dim_f);
+	
+      return 0;
+}
+int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id, int flag)
+{
+	//lista invertita cosi da facilitare l'operazione di estrazione dei file in caso di rimpiazzo (FIFO)
+	//l'inserimento diventa in coda e l'estrazione in testa in O(1) nel caso ottimo
+
+	//CREAZIONE + SETTING
+	file* new;
+	ec_null((new = malloc(sizeof(file))), "cache: malloc cache_writeFile fallita");
+	size_t len_f_name = strlen(f_name);
+	ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
+	strncpy(new->f_name, f_name, len_f_name);
+	new->f_size = dim_f;
+	new->next = NULL;
+	if(id != 0 ) new->f_lock = id;
+	else new->f_lock = 0;
+	//primo inserimento pre scrittura
+	new->f_read = 1;
+	new->f_write = 1;
+
+	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
+		LOG_ERR(errno, "cache: pthread_mutex_init fallita in cache_create_file");
+		free(new);
+		exit(EXIT_FAILURE);	
+	}
+
+	//COLLOCAZIONE NODO (in coda)
+	mutex_lock(&mtx, "cache: lock fallita in cache_enqueue");
+	//caso 1: cache vuota
+	if (*cache == NULL){
+		(*cache) = new;
+		mutex_unlock(&mtx, "cache: unlock fallita in cache_enqueue");
+		return 0;
+	}
+	//caso 2: un elemento
+	if((*cache)->next == NULL){
+		if (strcmp((*cache)->f_name, f_name) == 0){
+			printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
+			mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
+			return -1;
+		}
+		(*cache)->next = new;
+		mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
+		return 0;
+	}
+	mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
+	//caso 3: almeno due elementi (collacazione nodo in testa)
+	mutex_lock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");
+	file* prev = *cache;
+	mutex_lock(&((*cache)->next->mtx), "cache: unlock fallita in cache_enqueue");
+	file* curr = (*cache)->next;
+	file* aux;
+	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_enqueue");
+		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_enqueue");
+
+	}
+	curr->next = new;
+	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_enqueue");
+	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_enqueue");
+	return 0;
+}
+file* replacement_algorithm_write(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id, int flag)
+{
+	//cerca nodo che rispetti condizione di rimpiazzo (size_old >= size_new && file non lockato o lockato dallo stesso processo)
+	//caso peggiore O(n), caso migliore O(1) (testa e coda sono invertite)
+	//return ptr al nodo di rimpiazzo
+	
+	// CREAZIONE DEL NUOVO NODO -> operazione valida solo in OPENFILE
+      file* new;
+	ec_null((new = (file*)malloc(sizeof(file))), "replacement_algorithm_write: malloc fallita");
+
+      file* rep = NULL;
+	int found = 0;
+
+	// RICERCA DEL NODO DA RIMPIAZZARE -> operazione valida sempre ma si suppone che new sia gia in coda?
+	
+	//caso cache con un elemento
+	mutex_lock(&((*cache)->mtx) , "replacement_algorithm_write: lock fallita");
+	if ((*cache)->next == NULL){
+		if((*cache)->f_size >= dim_f && ((*cache)->f_lock == 0 || (*cache)->f_lock == id) ){ //l'unico elem. rispetta le cond. di rimpiazzo
+			rep = *cache;
+                  *cache = new;
+			found = 1;
+			printf("DEBUG: rimpiazzo file: %s\n", (*cache)->f_name);
+			mutex_unlock(&((*cache)->mtx), "replacement_algorithm_write: unlock fallita");
+		}else{	//l'unico elem. non rispetta le cond. di rimpiazzo
+			mutex_unlock(&((*cache)->mtx), "replacement_algorithm_write: unlock fallita");
+			free(new);
+			return NULL;
+		}
+	}else{
+		//caso coda con due o piu elementi - cerco nodo rimpiazzabile
+		file* prev = *cache;
+		mutex_lock(&((*cache)->next->mtx), "replacement_algorithm_write: unlock fallita !!");
+		file* curr = (*cache)->next;	
+		file* aux = prev;
+
+		while (curr->next != NULL){
+			//controllo nodo rimpiazzabile
+			if (prev->f_size >= dim_f && (prev->f_lock == 0 || prev->f_lock == id)){
+				//trovato il nodo di rimpiazzo
+				rep = prev;
+				//lo stacco
+				if (aux == *cache) *cache = curr; //se prev è il primo elem. della coda
+				else aux->next = curr;		//se prev sta tra aux e curr
+				//setto flag per scrittura
+				found = 1;
+			}
+			aux = prev;
+			prev = curr;
+			curr = curr->next;
+			mutex_lock(&(curr->mtx), "cache: lock fallita in replacement_algorithm");
+			mutex_unlock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
+		}
+            if(curr->next = NULL && found) curr->next = new;
+		//lista scandita, non ancora trovato, ultimo controllo
+		if (!found && prev->f_size >= dim_f && (prev->f_lock == 0 || prev->f_lock == id) ){
+			if (aux == prev){       //prev primo elemento lista
+				*cache = curr;
+			}else{                  //prev sta tra aux e curr
+				mutex_lock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
+				aux->next = curr;
+				mutex_unlock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
+			}
+			rep = prev;
+			curr->next = new; //new sarebbe la testa della lista (sempre al contrario)
+			found = 1;
+            }
+		//il nodo da rimpiazzare è curr -> penultimo della lista
+		if (!found && curr->f_size >= dim_f && (curr->f_lock == 0 || curr->f_lock == id){
+			//printf("DEBUG: rimpiazzo ultimo: %s\n", curr->f_name);
+			rep = curr;
+			prev->next = new;
+			found = 1;
+		}
+		mutex_unlock(&(prev->mtx), "cache: unlock fallita in replacement_algorithm");
+		mutex_unlock(&(curr->mtx), "cache: unlock fallita in replacement_algorithm");
+	}
+
+	if (!found){ 		//non ho trovato un rimpiazzo E SONO IN OPEN FILE
+		free(new);
+		return NULL;
+	}else{			//ho trovato un rimpiazzo
+		
+		//SETTING DEL NUOVO NODO
+		if (pthread_mutex_init(&(new->mtx), NULL) != 0){
+			LOG_ERR(errno, "replacement_algorithm_write: pthread_mutex_init fallita");
+			free(new);
+			exit(EXIT_FAILURE);	
+		}
+		mutex_lock(&(new->mtx), "replacement_algorithm_write: unlock fallita (scrittura file)");
+		if (id != 0) new->f_lock = id; //forse errato
+		else new->f_lock = 0;
+		size_t len_f_name = strlen(f_name);
+		ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
+		strncpy(new->f_name, f_name, len_f_name);
+		
+            /* DEVE ESSERE CONDIZIONATA DAL FATTO CHE CI TROVI IN OPEN FILE O WRITE FILE
+            new->f_size = dim_f;
+		ec_null((new->f_data = calloc(sizeof(byte), dim_f)), "cache: calloc cache_writeFile fallita");
+		for (int i = 0; i < dim_f; i++)
+			new->f_data[i] = f_data[i];
+		*/
+            mutex_unlock(&(new->mtx), "replacement_algorithm_write: unlock fallita (scrittura file)");
+		
+		//AGGIORNAMENTO STATO CACHE
+		cache_capacity_update(-(rep->f_size));
+		cache_capacity_update(dim_f);
+	}
+	return rep;
+}
+
+//scrittura in append
+int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
+{
+	file* rep_node; //nodo da restituire al server worker
+
+	//controllo capacità memoria per rimpiazzo
+	if(used_mem+dim_f > cache_capacity){
+		if((rep_node = replacement_algorithm_append(cache, f_name, f_data, dim_f, dirname, id)) == NULL){
+			printf("cache_writeFile: scrittura in append su %s (%zubyte) fallita\n", f_name, dim_f);
+			return -1;
+		}else{
+			printf("cache_appendToFile: append riuscita - file rimpiazzato: %s\n", rep_node->f_name);
+			return 0;
+		}
+	}
+	//printf("DEBUG: scrittura in append su %s...(%zu byte)\n", f_name, dim_f);
+	file* node;
+	size_t found = 0;
+	//scrittura senza rimpiazzo
+	mutex_lock(&((*cache)->mtx), "cache_appendToFile: lock fallita");
+	file* prev = *cache;
+	mutex_lock(&((*cache)->next->mtx), "cache_appendToFile: unlock fallita");
+	file* curr = (*cache)->next;
+	file* aux = prev;
+	
+	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
+		aux = prev;
+		prev = curr;
+		curr = curr->next;
+		mutex_lock(&(curr->mtx), "cache_appendToFile: lock fallita");
+		mutex_unlock(&(aux->mtx), "cache_appendToFile: unlock fallita");
+	}
+		
+	if (strcmp(prev->f_name, f_name) == 0){
+		found = 1;
+		node = prev;
+	}else{
+		if (strcmp(curr->f_name, f_name) == 0){
+			found = 1;
+			node = curr;
+		}
+	}
+	mutex_unlock(&(prev->mtx), "cache_appendToFile: unlock fallita");
+	mutex_unlock(&(curr->mtx), "cache_appendToFile: unlock fallita");
+
+	if (found){
+		mutex_lock(&(node->mtx), "cache_appendToFile: lock fallita");
+		size_t new_size = dim_f + node->f_size;
+		ec_null((node->f_data = realloc(node->f_data, sizeof(byte)*new_size)), "cache_appendToFile: calloc fallita");
+		int j = 0, i = node->f_size;
+		while (j < dim_f && i < new_size){
+			node->f_data[i] = f_data[j];
+			j++; i++;
+		}
+		node->f_size = new_size;
+		mutex_unlock(&(node->mtx), "cache_appendToFile: lock fallita");
+		cache_capacity_update(dim_f);
+		printf("DEBUG: scrittura in append su %s eseguita\n", node->f_name);
+	}
+	
+
+	//printf("DEBUG: scrittura in append riuscita - rimpiazzato: %s\n", rep_node->f_name);
+	if (found) return 0;
+	else return -1;
+}
 file* replacement_algorithm_append(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
 {
 	
@@ -276,303 +551,6 @@ file* replacement_algorithm_append(file** cache, char* f_name, byte* f_data, siz
 		return NULL;
 	}
 	return rep;
-}
-file* replacement_algorithm_write(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
-{
-	//cerca nodo che rispetti condizione di rimpiazzo (size_old >= size_new)
-	//caso peggiore O(n), caso migliore O(1) (testa e coda sono invertite)
-	//return ptr al nodo di rimpiazzo
-	
-	// CREAZIONE DEL NUOVO NODO
-	file* new;
-	ec_null((new = (file*)malloc(sizeof(file))), "replacement_algorithm_write: malloc fallita");
-	file* rep;
-	int found = 0;
-
-	// RICERCA DEL NODO DA RIMPIAZZARE
-	
-	//caso cache con un elemento
-	mutex_lock(&((*cache)->mtx) , "replacement_algorithm_write: lock fallita");
-	if ((*cache)->next == NULL){
-		if((*cache)->f_size >= dim_f){ //l'unico elem. rispetta le cond. di rimpiazzo
-			rep = *cache;
-			*cache = new;
-			found = 1;
-			printf("DEBUG: rimpiazzo file: %s\n", (*cache)->f_name);
-			mutex_unlock(&((*cache)->mtx), "replacement_algorithm_write: unlock fallita");
-		}else{	//l'unico elem. non rispetta le cond. di rimpiazzo
-			mutex_unlock(&((*cache)->mtx), "replacement_algorithm_write: unlock fallita");
-			free(new);
-			return NULL;
-		}
-	}else{
-		//caso coda con due o piu elementi - cerco nodo rimpiazzabile
-		file* prev = *cache;
-		mutex_lock(&((*cache)->next->mtx), "replacement_algorithm_write: unlock fallita !!");
-		file* curr = (*cache)->next;	
-		file* aux = prev;
-
-		while (curr->next != NULL){
-			//controllo: cond.rimpiazzo + lock + duplicato
-			if(prev->f_size >= dim_f && (prev->f_lock == 0 || prev->f_lock == id) && strcmp(prev->f_name, f_name) != 0){
-				//trovato il nodo di rimpiazzo
-				rep = prev;
-				//lo stacco
-				if(aux == *cache) *cache = curr; //se prev è il primo elem. della coda
-				else aux->next = curr;		//se prev sta tra aux e curr
-				//setto flag per scrittura
-				found = 1;
-			}
-			aux = prev;
-			prev = curr;
-			curr = curr->next;
-			mutex_lock(&(curr->mtx), "cache: lock fallita in replacement_algorithm");
-			mutex_unlock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
-		}
-		//il nodo da rimpiazzare è prev
-		if(prev->f_size >= dim_f && !found && prev->f_lock == 0){
-			//se prev è il primo elemento della lista
-			if(aux == prev){
-				//printf("DEBUG: rimpiazzo primo elem: %s\n", prev->f_name);
-				*cache = curr;
-			//prev sta tra aux e curr
-			}else{
-				mutex_lock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
-				aux->next = curr;
-				mutex_unlock(&(aux->mtx), "cache: unlock fallita in replacement_algorithm");
-			}
-			rep = prev;
-			curr->next = new; //PROBABILE ERRORE -> new dovrebbe andare in testa no? -> FIFO
-			found = 1;
-		}else{
-			//il nodo da rimpiazzare è curr
-			if(curr->f_size >= dim_f && !found && curr->f_lock == 0){
-				//printf("DEBUG: rimpiazzo ultimo: %s\n", curr->f_name);
-				rep = curr;
-				prev->next = new; //PROBABILE ERRORE -> new dovrebbe andare in testa no? -> FIFO
-				found = 1;
-			}
-		}
-		mutex_unlock(&(prev->mtx), "cache: unlock fallita in replacement_algorithm");
-		mutex_unlock(&(curr->mtx), "cache: unlock fallita in replacement_algorithm");
-	}
-
-	if(!found){ 		//non ho trovato un rimpiazzo
-		free(new);
-		return NULL;
-	}else{				//ho trovato un rimpiazzo
-		
-		//SETTING DEL NUOVO NODO
-		if (pthread_mutex_init(&(new->mtx), NULL) != 0){
-			LOG_ERR(errno, "replacement_algorithm_write: pthread_mutex_init fallita");
-			free(new);
-			exit(EXIT_FAILURE);	
-		}
-		mutex_lock(&(new->mtx), "replacement_algorithm_write: unlock fallita (scrittura file)");
-		if(id != 0) new->f_lock = 0;
-		else new->f_lock = id;
-		size_t len_f_name = strlen(f_name);
-		ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
-		strncpy(new->f_name, f_name, len_f_name);
-		new->f_size = dim_f;
-		ec_null((new->f_data = calloc(sizeof(byte), dim_f)), "cache: calloc cache_writeFile fallita");
-		for (int i = 0; i < dim_f; i++)
-			new->f_data[i] = f_data[i];
-		mutex_unlock(&(new->mtx), "replacement_algorithm_write: unlock fallita (scrittura file)");
-		
-		//AGGIORNAMENTO STATO CACHE
-		cache_capacity_update(-(rep->f_size));
-		cache_capacity_update(dim_f);
-	}
-	return rep;
-}
-
-//scrittura di un file in cache -> composta da cache_writeFile(controlla la capacità della cache) + cache_enqueue(crea effettiv. il file)
-int cache_writeFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
-{	
-	printf("DEBUG: scrittura %s (%zu byte)... \n", f_name, dim_f);	
-
-	//controllo preliminare: mem. tot. sufficiente?
-	if (cache_capacity < dim_f){
-		LOG_ERR(-1, "cache_writeFile: dimensione file maggiore della capacità della cache");
-		return -1;
-	}
-	//che ci facciamo con questo puntatore al nodo rimpiazzato?
-	file* node_rep = NULL; //ptr al nodo eventualmente rimpiazzato
-
-	if (used_mem+dim_f > cache_capacity || files_in_cache+1 > max_file_in_cache){
-		//capienza non sufficiente -> rimpiazzo
-		printf("(!) memoria insufficiente, rimpiazzo necessario\n");
-		if ((node_rep = replacement_algorithm_write(cache, f_name, f_data, dim_f, dirname, id)) == NULL){  //se lo trova deve anche scriverlo!
-			printf("cache_writeFile: scrittura di %s (%zu) fallita\n", f_name, dim_f);
-			return -1;
-		}else{
-			printf("DEBUG: scrittura %s eseguita con rimpiazzo di %s\n", f_name, node_rep->f_name);
-			return 0;
-		}
-	}
-	//normale scrittura in cache tramite enqueue
-	if (cache_enqueue(cache, f_name, f_data, dim_f, id) == -1){
-		LOG_ERR(-1, "cache_writeFile: enqueue fallita");
-		return -1;
-	}
-	printf("DEBUG: scrittura %s eseguita\n", f_name);
-	cache_capacity_update(dim_f);
-	return 0;
-}
-
-
-int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id)
-{
-	//creazione nuovo nodo + setting
-	file* new;
-	ec_null((new = malloc(sizeof(file))), "cache: malloc cache_writeFile fallita");
-	new->next = NULL;
-	
-	if(id != 0 ) new->f_lock = id;
-	else new->f_lock = 0;
-
-	/* if(OPEN_FILE){
-		new->f_read = 1;
-		new->f_write = 1;
-	}
-	*/
-	new->f_read = 0;
-	new->f_write = 0;
-	//setting node new;
-	size_t len_f_name = strlen(f_name);
-	ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
-	strncpy(new->f_name, f_name, len_f_name);
-	new->f_size = dim_f;
-	
-	//if(WRITE_FILE){
-		ec_null((new->f_data = calloc(sizeof(byte), dim_f)), "cache: calloc cache_writeFile fallita");
-		for (int i = 0; i < dim_f; i++)
-			new->f_data[i] = f_data[i];
-	//}
-
-	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
-		LOG_ERR(errno, "cache: pthread_mutex_init fallita in cache_create_file");
-		free(new);
-		exit(EXIT_FAILURE);	
-	}
-
-	//collocazione nodo
-	
-	mutex_lock(&mtx, "cache: lock fallita in cache_enqueue");
-	//caso 1: cache vuota
-	if (*cache == NULL){
-		(*cache) = new;
-		mutex_unlock(&mtx, "cache: unlock fallita in cache_enqueue");
-		return 0;
-	}
-	//caso 2: un elemento
-	if((*cache)->next == NULL){
-		if (strcmp((*cache)->f_name, f_name) == 0){
-			printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
-			mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
-			return -1;
-		}
-		(*cache)->next = new;
-		mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
-		return 0;
-	}
-	mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
-
-	//caso cache non vuota con almeno due elementi: 
-	//collacazione nodo in testa (alla fine della lista)
-	mutex_lock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");
-	file* prev = *cache;
-	mutex_lock(&((*cache)->next->mtx), "cache: unlock fallita in cache_enqueue");
-	file* curr = (*cache)->next;
-
-	file* aux;
-	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
-		//controllo duplicato
-		aux = prev;
-		prev = curr;
-		curr = curr->next;
-		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_enqueue");
-		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_enqueue");
-
-	}
-	int x = 0;
-	if(strcmp(prev->f_name, f_name) == 0 || strcmp(curr->f_name, f_name) == 0){
-		printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
-		free(new);
-		x = -1;
-	}else{
-		curr->next = new;
-	}
-	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_enqueue");
-	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_enqueue");
-	return x;
-}
-
-//scrittura in append
-int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, char* dirname, int id)
-{
-	file* rep_node; //nodo da restituire al server worker
-
-	//controllo capacità memoria per rimpiazzo
-	if(used_mem+dim_f > cache_capacity){
-		if((rep_node = replacement_algorithm_append(cache, f_name, f_data, dim_f, dirname, id)) == NULL){
-			printf("cache_writeFile: scrittura in append su %s (%zubyte) fallita\n", f_name, dim_f);
-			return -1;
-		}else{
-			printf("cache_appendToFile: append riuscita - file rimpiazzato: %s\n", rep_node->f_name);
-			return 0;
-		}
-	}
-	//printf("DEBUG: scrittura in append su %s...(%zu byte)\n", f_name, dim_f);
-	file* node;
-	size_t found = 0;
-	//scrittura senza rimpiazzo
-	mutex_lock(&((*cache)->mtx), "cache_appendToFile: lock fallita");
-	file* prev = *cache;
-	mutex_lock(&((*cache)->next->mtx), "cache_appendToFile: unlock fallita");
-	file* curr = (*cache)->next;
-	file* aux = prev;
-	
-	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
-		aux = prev;
-		prev = curr;
-		curr = curr->next;
-		mutex_lock(&(curr->mtx), "cache_appendToFile: lock fallita");
-		mutex_unlock(&(aux->mtx), "cache_appendToFile: unlock fallita");
-	}
-		
-	if (strcmp(prev->f_name, f_name) == 0){
-		found = 1;
-		node = prev;
-	}else{
-		if (strcmp(curr->f_name, f_name) == 0){
-			found = 1;
-			node = curr;
-		}
-	}
-	mutex_unlock(&(prev->mtx), "cache_appendToFile: unlock fallita");
-	mutex_unlock(&(curr->mtx), "cache_appendToFile: unlock fallita");
-
-	if (found){
-		mutex_lock(&(node->mtx), "cache_appendToFile: lock fallita");
-		size_t new_size = dim_f + node->f_size;
-		ec_null((node->f_data = realloc(node->f_data, sizeof(byte)*new_size)), "cache_appendToFile: calloc fallita");
-		int j = 0, i = node->f_size;
-		while (j < dim_f && i < new_size){
-			node->f_data[i] = f_data[j];
-			j++; i++;
-		}
-		node->f_size = new_size;
-		mutex_unlock(&(node->mtx), "cache_appendToFile: lock fallita");
-		cache_capacity_update(dim_f);
-		printf("DEBUG: scrittura in append su %s eseguita\n", node->f_name);
-	}
-	
-
-	//printf("DEBUG: scrittura in append riuscita - rimpiazzato: %s\n", rep_node->f_name);
-	if (found) return 0;
-	else return -1;
 }
 
 //lock e unlocl
