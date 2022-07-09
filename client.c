@@ -29,7 +29,7 @@ char *socket_name = NULL;
 
 static void case_h();
 static long isNumber(const char* s);
-static int is_opt( char* arg, char* opt);
+static int is_opt(char* arg, char* opt);
 static int is_argument(char* c);
 static int is_directory(const char *path);
 static void write_in_directory(const char* dirname, int* n);
@@ -37,9 +37,9 @@ static void parser(int dim, char** array);
 static int append_file(const char* s);
 static int writeFile_request(const char* arg_W);
 static void case_w(char* arg_w);
-static void case_l( char* arg_l);
-static void case_u( char* arg_u);
-static void case_c( char* arg_c);
+static void case_l(char* arg_l);
+static void case_u(char* arg_u);
+static void case_c(char* arg_c);
 static void set_socket(const char* socket_name);
 
 
@@ -77,7 +77,6 @@ static int is_directory(const char *path)
 
 
 /*_____________________ SCRITTURE _____________________*/
-
 // CASE_W 
 static void case_W (char* arg_W)
 {
@@ -216,7 +215,6 @@ static int append_file(const char* f_name)
 
 
 /*_____________________ ALTRO _____________________*/
-
 // CASE_R
 static void case_r (char* arg_r)
 {
@@ -480,8 +478,6 @@ int main(int argc, char* argv[]){
 	return 0;
 }
 
-
-
 /*_____________________ API CLIENT _____________________*/
 
 //FUNZIONE AUSILIARIA API (tempo trascorso tra t1,t2)
@@ -583,6 +579,9 @@ int openFile(const char* pathname, int flags)
 	//11 riceve: conferma ricezione pathname
       ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 	if(buf != 0) return -1;
+
+      //DIMENSIONE FILE DA SCRIVERE
+
 
       //FLAGS
       //12 comunica: flags
