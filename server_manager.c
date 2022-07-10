@@ -14,7 +14,6 @@ static int worker_lockFile(int x){return 0;}
 static int worker_unlockFile(int x){return 0;}
 static int worker_removeFile(int x){return 0;}
 
-/*_____________________ read_config_file _____________________*/
 int read_config_file(char* f_name)
 {
 	//apertura del fine
@@ -69,8 +68,7 @@ int read_config_file(char* f_name)
 	return 0;
 }
 
-/*_____________________ handlers segnali di terminazione _____________________*/
-//forse ne manca uno
+//HANDLERS SEGNALI - forse ne manca uno?
 static void handler_sigintquit(int signum){
 	sig_intquit = 1;
 }
@@ -297,23 +295,14 @@ void* start_func(void *arg)
             //DEBUG: cosa accade se op == EOF? si entra comunque nel caso default dello switch?
 		
 		//client disconnesso
-		if (op == EOF){
+		if (op == EOF || op == 0){
 			fprintf(stderr, "start_func: client %d disconnesso\n", fd_c);
 			*buf = fd_c;
 			*buf = fd_c*(-1);
 			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) != -1)
 				LOG_ERR(-1, "start_func: write su pipe fallita");
 		}
-
 		switch(op){
-			//client disconnesso
-			case 0:
-				fprintf(stderr, "start_func: (0) client %d disconnesso\n", fd_c);
-				*buf = fd_c;
-				*buf = fd_c*(-1);
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (0) write su pipe fallita");
-				break;
 			//openFile
 			case 1:
 				if (worker_openFile(fd_c) == -1){
@@ -431,20 +420,20 @@ void* start_func(void *arg)
 
 
 
-/*_____________________ SERVER_WORKER _____________________*/
+//////////////////////////////////////  SERVER_WORKER  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 
 //OPEN FILE
 static int worker_openFile(int fd_c)
 {
 	int* buf;
-    ec_null( (buf = malloc(sizeof(int))), "server_worker: malloc fallita");
-    *buf = 0;
+   	ec_null( (buf = malloc(sizeof(int))), "server_worker: malloc fallita");
+    	*buf = 0;
 	char* pathname;
 	size_t len_pathname;
 	int flags;
 	
 	//SETTING RICHIESTA
-      //2 comunica: richiesta openFile (1) accettata
+    	//2 comunica: richiesta openFile (1) accettata
 	*buf = 1;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	
@@ -485,56 +474,50 @@ static int worker_openFile(int fd_c)
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 
-
-      // da questo punto in poi:
-      // 1. controllare se il file esiste
-      // 2. se esiste controllare se è lockato
-      // 3. confrontare le due interrogazioni con i flag immessi dal client
-      // casistiche: 
-      // CASO 1:  se O_CREATE|O_LOCK -> se esiste o è lockato -> errore
-      //          else creazione di un nuovo file
-      // CASO 2:  se O_LOCK (senza O_CREATE) -> se non esiste o è lockato -> errore
-      //          else   ...                
-
-	size_t file_exist = 0;
-	size_t file_notlocked = 0;
+	//PART 2S - DA OTTIMIZZARE E RIVEDERE ALCUNI PASSAGGI
 	file* f;
+	size_t file_exist = 0;
+	int ret = 0;
 
 	//se il file f esiste setta var
 	if((f = cache_research(cache, pathname)) != NULL) file_exist = 1;
-	//se il file f esiste e non è lockato setta var
-	if(f != NULL && f->f_lock == 0 ) file_notlocked = 1;
-
-	//gestione dei flag
 	
-	//casi di errore
-      //O_CREATE => !file_exist
-	if ((flag = O_CREATE|O_LOCK) && file_exist){
-            LOG_ERR(ENOENT, "file esistente, flag O_CREATE attivo");
-            return -1;
-      }
-      //O_LOCK => file_exist
-	if ((flag = O_LOCK) && !file_exist ){
-            LOG_ERR(ENOENT, "file non esistente, flag O_CREATE mancante");
-            return -1;
-      }
-      //file lockato da un altro processo
-      if ((flag = O_LOCK) && (!file_notlocked || f->f_lock != id ){
-            LOG_ERR(ENOENT, "file lockato da un altro processo");
-            return -1;
-      }
+	//errori con O_CREATE
+	if(flag=O_CREATE || flag=(O_CREATE|O_LOCK) && file_exist ){
+		LOG_ERR(-1, "server.openFile: condizioni flag O_CREATE non rispettate");
+		ret = -1;
+	}
+	 //errori con O_LOCK
+	 if (flag=O_LOCK && !file_exist){
+		LOG_ERR(-1, "server.openFile: condizioni flag O_LOCK non rispettate");
+		ret = -1;
+	 }
 
-      //casi ok
-      //se presente O_CREATE
-	if ((flag = O_CREATE|O_LOCK) && !file_exist){ 
-            //crezione del file in lock
-            //la writeFile chiamata dal client si occuperà di creare
-            return 0;
-
-      if (flag = O_LOCK && file_notlocked){
-            //apertura del file in lock
+	//crea nuovo file in lock
+	if (flag=(O_CREATE|O_LOCK) /*&& !file_exist*/ ){ 
+      	//creazione di un file vuoto lockato
+            if(cache_insert(cache, pathname, NULL, 0, NULL, id, 0) != 0){ 	//errori generabili?
+                  LOG_ERR(-1, "server.openFile: creazione file non riuscita");
+                  ret = -1;
+            }
+      }else{
+            LOG_ERR(ENOENT, "server.openFile: condizioni flag O_CREATE non rispettate");
+		ret = -1;
       }
+	
+	//i due casi sono gestiti separatamente
+	//O_LOCK -> file aperto in lock e in scrittura/lettura
+	if (flag=O_LOCK && file_exist && (f->f_lock == 0 || f->f_lock == id ) ){
+            cache_lockFile(cache, pathname, id);
+      }else{
+            LOG_ERR(ENOENT, "server.openFile: condizioni flag O_LOCK non rispettate");
+		ret = -1;
+	}
 
-	printf("pathname: %s flags = %d\n", pathname, flags);
+	//ESITO DELLA OPENFILE al clinet
+	*buf = ok;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+
+	//GESTIONE FILE ESPULSI PER RIMPIAZZA -> inviare al client
 	return 0;
 }
