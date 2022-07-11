@@ -418,8 +418,6 @@ void* start_func(void *arg)
 	pthread_exit((void*)0);
 }
 
-
-
 //////////////////////////////////////  SERVER_WORKER  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 
 //OPEN FILE
@@ -431,7 +429,9 @@ static int worker_openFile(int fd_c)
 	char* pathname;
 	size_t len_pathname;
 	int flags;
+	file* file_expelled = NULL;
 	
+
 	//SETTING RICHIESTA
     	//2 comunica: richiesta openFile (1) accettata
 	*buf = 1;
@@ -451,73 +451,88 @@ static int worker_openFile(int fd_c)
 	//PATHNAME
 	//allocazione mem pathname
 	ec_null((pathname = calloc(sizeof(char), ++len_pathname)), "server_worker: calloc fallita");
-	memset(pathname, '\0', sizeof(char)*len_pathname);
 	//9 riceve: pathname
-	read(fd_c, pathname, sizeof(char)*(len_pathname-1));
+	read(fd_c, pathname, sizeof(char)*(len_pathname-1)); //inserisci controllo esito read
+	pathname[len_pathname+1] = '\0';
 	//10 comunica: ricevuto pathname
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 
 	//FLAGS
 	//13 riceve: flags
-	read(fd_c, buf, sizeof(char)*(len_pathname-1));
-	flags = *buf;
-	//14 comunica: recevuti flags
+	ec_meno1(read(fd_c, buf, sizeof(int)), "server_worker: read fallita");
+	flags = *buf;9
+	//14 comunica recevuti flags
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 
 	//IDENTIFICAZIONE PROCESSO CLIENT
 	//17 riceve: pid
-	read(fd_c, buf, sizeof(char)*(len_pathname-1));
+	ec_meno1(read(fd_c, buf, sizeof(int)), "server_worker: read fallita");
 	int id = *buf;
 	//18 comunica: recevuti flags
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 
-	//PART 2S - DA OTTIMIZZARE E RIVEDERE ALCUNI PASSAGGI
+	//dati ricevuti 
+
+	//ELABORAZIONE RICHIESTA
 	file* f;
 	size_t file_exist = 0;
-	int ret = 0;
+	int ret_client = 0;
+	file* file_expelled = NULL;
 
 	//se il file f esiste setta var
 	if((f = cache_research(cache, pathname)) != NULL) file_exist = 1;
 	
-	//errori con O_CREATE
-	if(flag=O_CREATE || flag=(O_CREATE|O_LOCK) && file_exist ){
+	//casi di errore 
+	if((flags==O_CREATE || flags==(O_CREATE|O_LOCK)) && file_exist ){
 		LOG_ERR(-1, "server.openFile: condizioni flag O_CREATE non rispettate");
-		ret = -1;
+		ret_client = -1;
 	}
-	 //errori con O_LOCK
-	 if (flag=O_LOCK && !file_exist){
+	if (flags==O_LOCK && !file_exist){
 		LOG_ERR(-1, "server.openFile: condizioni flag O_LOCK non rispettate");
-		ret = -1;
-	 }
+		ret_client = -1;
+	}
 
 	//crea nuovo file in lock
-	if (flag=(O_CREATE|O_LOCK) /*&& !file_exist*/ ){ 
+	if (flags==(O_CREATE|O_LOCK) /*|| flag=O_CREATE*/){ 
       	//creazione di un file vuoto lockato
-            if(cache_insert(cache, pathname, NULL, 0, NULL, id, 0) != 0){ 	//errori generabili?
+            if(cache_insert(cache, pathname, NULL, 0, NULL, id, 0, &file_expelled) != 0){ 
                   LOG_ERR(-1, "server.openFile: creazione file non riuscita");
-                  ret = -1;
+                  ret_client = -1;
             }
-      }else{
-            LOG_ERR(ENOENT, "server.openFile: condizioni flag O_CREATE non rispettate");
-		ret = -1;
-      }
-	
-	//i due casi sono gestiti separatamente
+	}
 	//O_LOCK -> file aperto in lock e in scrittura/lettura
-	if (flag=O_LOCK && file_exist && (f->f_lock == 0 || f->f_lock == id ) ){
+	if (flags==O_LOCK && (f->f_lock == 0 || f->f_lock == id ) ){
             cache_lockFile(cache, pathname, id);
-      }else{
-            LOG_ERR(ENOENT, "server.openFile: condizioni flag O_LOCK non rispettate");
-		ret = -1;
+		f->f_write = 1;
+		f->f_read = 1;
+      }
+
+	//INVIO ESITO OPENFILE
+	*buf = ret_client;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+	
+
+	//INVIO FILE ESPULSO EVENTUALMENTE ESPULSO
+	*buf = 0;
+	if (file_expelled != NULL){
+		*buf = 1;
+		ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+	}else{
+		ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	}
 
-	//ESITO DELLA OPENFILE al clinet
-	*buf = ok;
-	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+	//LEN PATHNAME -> controlla tipi
+	int len = strlen(file_expelled->f_name);
+	*buf = len;
+	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
+	//PATHANAME
+	ec_meno1(write(fd_sk, file_expelled->f_name, len*sizeof(char)), "client: write fallita");
+	//SIZE DATA
+	ec_meno1(write(fd_sk, file_expelled->f_size, sizeof(int)), "client: write fallita");
 
-	//GESTIONE FILE ESPULSI PER RIMPIAZZA -> inviare al client
+
 	return 0;
 }
