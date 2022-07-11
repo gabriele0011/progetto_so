@@ -4,7 +4,7 @@
 #define O_CREATE 10
 #define O_LOCK 11
 
-static int worker_openFile(int fd_client);
+static int worker_openFile(int fd_c);
 static int worker_closeFile(int x){return 0;}
 static int worker_readFile(int x){return 0;}
 static int worker_readNFiles(int x){return 0;}
@@ -82,6 +82,169 @@ static void handler_sighup(int signum){
 void* start_func2(void *arg){
       printf("start_func2 debug\n");
 }
+void* start_func(void *arg)
+{
+	int* buf = NULL;
+	ec_null((buf = malloc(sizeof(int))), "start_func: malloc fallita");
+	*buf = 0;
+	int fd_c;
+	int op;
+	int err;
+	
+	while (1){
+		mutex_lock(&g_mtx, "start_func: lock fallita");
+		//pop richiesta dalla coda concorrente
+		while (((*buf = dequeue(&conc_queue)) == -1) && !sig_intquit){
+                  printf("DEBUG.start_func: buf dequeue = %d\n", *buf); //DEBUG DEBUG DEBUG
+                  //wait
+			if ( (err = pthread_cond_wait(&cv, &g_mtx)) == -1){
+				LOG_ERR(err, "start_func: phtread_cond_wait fallita");
+				exit(EXIT_FAILURE);
+			}
+		}
+		mutex_unlock(&g_mtx, "start_func: lock fallita");
+		
+            
+            //salvo il client
+		fd_c = *buf;
+		//ripristino buf
+            *buf = 0;
+
+		//leggi la richiesta di fd_c
+		if (read(fd_c, buf, sizeof(int)) == -1){
+			LOG_ERR(-1, "start_func: read su client");
+			*buf = 0;
+		}
+
+		op = *buf;
+            printf("DEBUG.start_func: op = %d\n", op); //DEBUG DEBUG DEBUG
+
+            //DEBUG: cosa accade se op == EOF? si entra comunque nel caso default dello switch?
+		
+		//client disconnesso
+		if (op == EOF || op == 0){
+			fprintf(stderr, "start_func: client %d disconnesso\n", fd_c);
+			*buf = fd_c;
+			*buf = fd_c*(-1);
+			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) != -1)
+				LOG_ERR(-1, "start_func: write su pipe fallita");
+		}
+		switch(op){
+			//openFile
+			case 1:
+				if (worker_openFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (1) worker_openFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				printf("op %d dal client %d terminata\n", op, fd_c);
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (1) write su pipe fallita");
+				break;
+			
+			//closeFile
+			case 2:
+				if (worker_closeFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (2) worker_closeFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (2) write su pipe fallita");
+				break;
+			
+			//writeFile
+			case 3:
+				if (worker_writeFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (3) worker_writeFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (3) write su pipe fallita");
+				break;
+			
+			//appendToFile
+			case 4:
+				if (worker_appendToFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (4) worker_appendToFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (4) write su pipe fallita");
+				break;
+			
+			//readFile
+			case 5:
+				if (worker_readFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (5) worker_readFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (5) write su pipe fallita");
+				break;
+			
+			//readNFiles
+			case 6: 
+				if (worker_readNFiles(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (6) worker_readNFiles fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (6) write su pipe fallita");
+				break;
+			
+			//lockFile
+			case 7: 
+				if (worker_lockFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (7) worker_lockFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (7) write su pipe fallita");
+				break;
+			
+			//unlockFile
+			case 8: 
+				if (worker_unlockFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (8) worker_unlockFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (8) write su pipe fallita");
+				break;
+			
+			//removeFile
+			case 9: 
+				if (worker_removeFile(fd_c) == -1){
+					LOG_ERR(-1, "start_func: (9) worker_removeFile fallita");
+					exit(EXIT_FAILURE);
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (9) write su pipe fallita");
+				break;
+			//default
+			default:
+ 				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1){
+					LOG_ERR(EPIPE, "start_func: (default) write su pipe fallita");
+				}
+				*buf = fd_c;
+				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
+					LOG_ERR(EPIPE, "start_func: (default) richiesta client non valida");
+				break;
+		}
+	}
+      printf("richiesta di tipo %d dal client %d\n", op, fd_c);
+	if(buf) free(buf);
+	pthread_exit((void*)0);
+}
+
 
 //MAIN
 int main(int argc, char* argv[])
@@ -255,168 +418,6 @@ int main(int argc, char* argv[])
 	
 	return 0;
 }
-void* start_func(void *arg)
-{
-	int* buf = NULL;
-	ec_null((buf = malloc(sizeof(int))), "start_func: malloc fallita");
-	*buf = 0;
-	int fd_c;
-	int op;
-	int err;
-	
-	while (1){
-		mutex_lock(&g_mtx, "start_func: lock fallita");
-		//pop richiesta dalla coda concorrente
-		while (((*buf = dequeue(&conc_queue)) == -1) && !sig_intquit){
-                  printf("DEBUG.start_func: buf dequeue = %d\n", *buf); //DEBUG DEBUG DEBUG
-                  //wait
-			if ( (err = pthread_cond_wait(&cv, &g_mtx)) == -1){
-				LOG_ERR(err, "start_func: phtread_cond_wait fallita");
-				exit(EXIT_FAILURE);
-			}
-		}
-		mutex_unlock(&g_mtx, "start_func: lock fallita");
-		
-            
-            //salvo il client
-		fd_c = *buf;
-		//ripristino buf
-            *buf = 0;
-
-		//leggi la richiesta di fd_c
-		if (read(fd_c, buf, sizeof(int)) == -1){
-			LOG_ERR(-1, "start_func: read su client");
-			*buf = 0;
-		}
-
-		op = *buf;
-            printf("DEBUG.start_func: op = %d\n", op); //DEBUG DEBUG DEBUG
-
-            //DEBUG: cosa accade se op == EOF? si entra comunque nel caso default dello switch?
-		
-		//client disconnesso
-		if (op == EOF || op == 0){
-			fprintf(stderr, "start_func: client %d disconnesso\n", fd_c);
-			*buf = fd_c;
-			*buf = fd_c*(-1);
-			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) != -1)
-				LOG_ERR(-1, "start_func: write su pipe fallita");
-		}
-		switch(op){
-			//openFile
-			case 1:
-				if (worker_openFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (1) worker_openFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				printf("op %d dal client %d terminata\n", op, fd_c);
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (1) write su pipe fallita");
-				break;
-			
-			//closeFile
-			case 2:
-				if (worker_closeFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (2) worker_closeFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (2) write su pipe fallita");
-				break;
-			
-			//writeFile
-			case 3:
-				if (worker_writeFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (3) worker_writeFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (3) write su pipe fallita");
-				break;
-			
-			//appendToFile
-			case 4:
-				if (worker_appendToFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (4) worker_appendToFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (4) write su pipe fallita");
-				break;
-			
-			//readFile
-			case 5:
-				if (worker_readFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (5) worker_readFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (5) write su pipe fallita");
-				break;
-			
-			//readNFiles
-			case 6: 
-				if (worker_readNFiles(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (6) worker_readNFiles fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (6) write su pipe fallita");
-				break;
-			
-			//lockFile
-			case 7: 
-				if (worker_lockFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (7) worker_lockFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (7) write su pipe fallita");
-				break;
-			
-			//unlockFile
-			case 8: 
-				if (worker_unlockFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (8) worker_unlockFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (8) write su pipe fallita");
-				break;
-			
-			//removeFile
-			case 9: 
-				if (worker_removeFile(fd_c) == -1){
-					LOG_ERR(-1, "start_func: (9) worker_removeFile fallita");
-					exit(EXIT_FAILURE);
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (9) write su pipe fallita");
-				break;
-			//default
-			default:
- 				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1){
-					LOG_ERR(EPIPE, "start_func: (default) write su pipe fallita");
-				}
-				*buf = fd_c;
-				if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1)
-					LOG_ERR(EPIPE, "start_func: (default) richiesta client non valida");
-				break;
-		}
-	}
-      printf("richiesta di tipo %d dal client %d\n", op, fd_c);
-	if(buf) free(buf);
-	pthread_exit((void*)0);
-}
 
 //////////////////////////////////////  SERVER_WORKER  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 
@@ -429,8 +430,6 @@ static int worker_openFile(int fd_c)
 	char* pathname;
 	size_t len_pathname;
 	int flags;
-	file* file_expelled = NULL;
-	
 
 	//SETTING RICHIESTA
     	//2 comunica: richiesta openFile (1) accettata
@@ -461,7 +460,7 @@ static int worker_openFile(int fd_c)
 	//FLAGS
 	//13 riceve: flags
 	ec_meno1(read(fd_c, buf, sizeof(int)), "server_worker: read fallita");
-	flags = *buf;9
+	flags = *buf;
 	//14 comunica recevuti flags
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
@@ -480,7 +479,7 @@ static int worker_openFile(int fd_c)
 	file* f;
 	size_t file_exist = 0;
 	int ret_client = 0;
-	file* file_expelled = NULL;
+	file** file_expelled = NULL;
 
 	//se il file f esiste setta var
 	if((f = cache_research(cache, pathname)) != NULL) file_exist = 1;
@@ -498,7 +497,7 @@ static int worker_openFile(int fd_c)
 	//crea nuovo file in lock
 	if (flags==(O_CREATE|O_LOCK) /*|| flag=O_CREATE*/){ 
       	//creazione di un file vuoto lockato
-            if(cache_insert(cache, pathname, NULL, 0, NULL, id, 0, &file_expelled) != 0){ 
+            if(cache_insert(&cache, pathname, NULL, 0, id, 0, file_expelled) != 0){ 
                   LOG_ERR(-1, "server.openFile: creazione file non riuscita");
                   ret_client = -1;
             }
@@ -514,7 +513,6 @@ static int worker_openFile(int fd_c)
 	*buf = ret_client;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	
-
 	//INVIO FILE ESPULSO EVENTUALMENTE ESPULSO
 	*buf = 0;
 	if (file_expelled != NULL){
@@ -525,14 +523,17 @@ static int worker_openFile(int fd_c)
 	}
 
 	//LEN PATHNAME -> controlla tipi
-	int len = strlen(file_expelled->f_name);
+	int len = strlen((*file_expelled)->f_name);
 	*buf = len;
-	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
+	ec_meno1(write(fd_c, buf, sizeof(int)), "client: write fallita");
 	//PATHANAME
-	ec_meno1(write(fd_sk, file_expelled->f_name, len*sizeof(char)), "client: write fallita");
+	ec_meno1(write(fd_c, (*file_expelled)->f_name, len*sizeof(char)), "client: write fallita");
 	//SIZE DATA
-	ec_meno1(write(fd_sk, file_expelled->f_size, sizeof(int)), "client: write fallita");
-
+	ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "client: write fallita");
+	//DATA
+	ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "client: write fallita");
 
 	return 0;
 }
+
+
