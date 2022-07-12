@@ -12,45 +12,56 @@ void create_cache(int mem_size, int max_file_in_cache)
 }
 file* cache_research(file* cache, char* f_name)
 {
-	//controllo coda vuota
+	file* node = NULL;
+	//CODA VUOTA
 	mutex_lock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	if (cache == NULL){
-		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+		mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
 		return NULL;
 	}
 	mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	
-	//controllo coda con un elemento
+	//CODA CON UN ELEMENTO
 	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 	if (cache->next == NULL && strcmp(cache->f_name, f_name) == 0){
 		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 		return cache;
 	}
 	
-	//due o piu elementi in coda
+	//CODA CON DUE O PIU ELEMENTI
 	file* prev = cache;
 	mutex_lock(&(cache->next->mtx), "cache: unlock fallita in cache_duplicate_control");
 	file* curr = cache->next;
 
 	file* aux;
-	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
+	int found = 0;
+	while (curr->next != NULL){
+		if(strcmp(prev->f_name, f_name) != 0){
+			found = 1;
+			node = prev;
+		}
 		aux = prev;
 		prev = curr;
 		curr = curr->next;
 		mutex_lock(&(curr->mtx), "cache: lock fallita in cache_duplicate_control");
 		mutex_unlock(&(aux->mtx), "cache: unlock fallita in cache_duplicate_control");
-
 	}
-	file* node = NULL;
-	if (strcmp(prev->f_name, f_name) == 0){
-		node = prev;
-	}else{
-		if (strcmp(curr->f_name, f_name) == 0)
+	
+	//CONTROLLO PRIMI/ULTIMI DUE ELEMENTI
+	if(!found){
+		if (strcmp(prev->f_name, f_name) == 0){
+			node = prev;
+			found = 1;
+		}
+		if (strcmp(curr->f_name, f_name) == 0){
 			node = curr;
+			found = 1;
+		}
 	}
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	return node;
+	if (!found) return NULL;
+	else return node;
 }
 void cache_capacity_update(int dim_file, int new_file_or_not)
 {
@@ -173,6 +184,7 @@ int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id,
 	}
 
 	//INSERIMENTO SENZA RIMPIAZZO
+	printf("cahce_insert: enqueue (rimpiazzo non necessario)\n");
 	if (cache_enqueue(cache, f_name, f_data, dim_f, id) == -1){
 		LOG_ERR(-1, "cache_writeFile: enqueue fallita");
 		return -1;
@@ -205,7 +217,6 @@ int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id
 	else new->f_lock = 0;
 	new->f_size = dim_f;
 
-
 	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
 		LOG_ERR(errno, "cache: pthread_mutex_init fallita in cache_create_file");
 		free(new);
@@ -220,6 +231,7 @@ int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id
 		mutex_unlock(&mtx, "cache: unlock fallita in cache_enqueue");
 		return 0;
 	}
+
 	//caso 2: un elemento
 	if((*cache)->next == NULL){
 		if (strcmp((*cache)->f_name, f_name) == 0){
@@ -232,6 +244,7 @@ int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id
 		return 0;
 	}
 	mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
+	
 	//caso 3: almeno due elementi (collacazione nodo in testa)
 	mutex_lock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");
 	file* prev = *cache;

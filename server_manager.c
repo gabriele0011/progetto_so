@@ -68,7 +68,7 @@ int read_config_file(char* f_name)
 	return 0;
 }
 
-//HANDLERS SEGNALI - forse ne manca uno?
+//HANDLERS SEGNALI
 static void handler_sigintquit(int signum){
 	sig_intquit = 1;
 }
@@ -77,11 +77,6 @@ static void handler_sighup(int signum){
 }
 
 
-//DEBUG
-//start function thread di prova
-void* start_func2(void *arg){
-      printf("start_func2 debug\n");
-}
 void* start_func(void *arg)
 {
 	int* buf = NULL;
@@ -273,20 +268,18 @@ int main(int argc, char* argv[])
 	
 	struct sigaction s2;
 	s2.sa_handler = handler_sighup;
-	ec_meno1(sigaction(SIGQUIT, &s2, NULL), "server_manager: sigaction fallita");
+	ec_meno1(sigaction(SIGHUP, &s2, NULL), "server_manager: sigaction fallita");
 	
 	/************** CACHE **************/
 	create_cache(server_mem_size, max_storage_file);
-      //printf("server.DEBUG: creazione cache riusciata\n");
-
-	//BUF LETTURA
-	int buf;
+      printf("server manager: creazione cache riusciata\n");
 
 	/************** PIPE SENZA NOME **************/
 	int pfd[2];
 	ec_meno1(pipe(pfd), "server_manager: creazione pipe fallita");
 	int fd_pipe_read = pfd[0];
 	int fd_pipe_write = pfd[1];
+	
       //printf("Pipe write fd: %d\n\n", fd_pipe_write);
 	//printf("Pipe read fd: %d\n", fd_pipe_read);
 	
@@ -326,7 +319,8 @@ int main(int argc, char* argv[])
 	FD_ZERO(&set);		
 	FD_SET(fd_skt, &set);
       int n_client_conn = 0;
-	
+	int *buf = NULL;
+
       /************** LOOP **************/
 	while (!sig_intquit){
 		if(sig_hup && n_client_conn == 0){
@@ -336,57 +330,57 @@ int main(int argc, char* argv[])
 		rdset = set;
 		//intercetta fd pronti
 		if (select(fd_num+1, &rdset, NULL, NULL, NULL) == -1){
-			LOG_ERR(-1, "server_manager: select fallita");
+			LOG_ERR(errno, "server_manager: select fallita");
 			break;
-		}else{
-			//controlla fd intercettati da select
-			for (int fd = 0; fd <= fd_num; fd++){
-				if (FD_ISSET(fd, &rdset)){
-					printf("intercettato fd = %d\n",fd);
-					//CASO 1: si tratta del fd_skt -> tentativo di connessione da parte di un client
-					if (fd == fd_skt){ 
-						printf("fd = %d è il fd socket connect\n\n", fd);
-						//CONTROLLO SEGNALE sig_hup
-						if (!sig_hup){
-							//stabilisci connessione con un client ridirigendolo sulla nuova socket dedicata
-							if ((fd_c = accept(fd_skt, NULL, 0)) == -1){ LOG_ERR(-1, "server_manager: accept fallita"); break; }
-							FD_SET(fd_c, &set);
-							if (fd_c > fd_num) fd_num = fd_c;
-                                          printf("DEBUG.loop: fd_c = %d aggiunto nel rdset\n", fd_c);
-						}
-					}else{ 
-						//caso 2: si tratta del fd della pipe (I/O con client) -> un thread ha un messaggio
-						if (fd == fd_pipe_read){
-							if (read(fd_pipe_read, &buf, sizeof(int)) == -1){ LOG_ERR(-1, "server_manager: readn fallita"); break; }
-							//si hanno due casi, rispettivamente due messaggi possibili:
-							//richiesta servita -> thread ritorna fd
-							if (buf == fd) FD_SET(buf, &set);
-							//client disconnesso (read legge 0) -> thread ritorna -fd
-							if (buf <= 0){
-								buf = buf*(-1);
-								FD_CLR(buf, &set);
-								close(fd);
-								n_client_conn--;
-							}
-						//caso 3: inserisce fd client (connesso)in coda concorrente -> nuova richiesta
+		}
+		//controlla fd intercettati da select
+		for (int fd = 0; fd <= fd_num; fd++){
+			if (FD_ISSET(fd, &rdset)){
+				printf("intercettato fd = %d\n",fd);
+				//CASO 1: si tratta del fd_skt -> tentativo di connessione da parte di un client
+				if (fd == fd_skt){ 
+					printf("fd = %d è il fd socket connect\n\n", fd);
+					//CONTROLLO SEGNALE sig_hup
+					if (!sig_hup){
+						//stabilisci connessione con un client ridirigendolo sulla nuova socket dedicata
+						if ((fd_c = accept(fd_skt, NULL, 0)) == -1){ LOG_ERR(errno, "server_manager: accept fallita"); break; }
+						FD_SET(fd_c, &set);
+						if (fd_c > fd_num) fd_num = fd_c;
+                                    printf("DEBUG.loop: fd_c = %d aggiunto nel rdset\n", fd_c);
+					}
+				}else{
+					//caso 2: si tratta del fd della pipe (I/O con client) -> un thread ha un messaggio
+					if (fd == fd_pipe_read){
+						if (read(fd_pipe_read, buf, PIPE_MAX_LEN_MSG) == -1){ LOG_ERR(errno, "server_manager: readn fallita"); break; }
+						//si hanno due casi, rispettivamente due messaggi possibili:
+						//client disconnesso (read legge 0) -> thread ritorna -fd
+						if (*buf <= 0){
+							*buf = (*buf)*(-1);
+							FD_CLR(*buf, &set);
+							close(fd);
+							n_client_conn--;
 						}else{
-                                          printf("sto servendo fd = %d\n", fd);
-							//lock
-							mutex_lock(&g_mtx, "server_manager: lock fallita");
-							//inserisci richiesta in coda
-							if(enqueue(&conc_queue, fd) == -1){ LOG_ERR(err, "server_manager: enqueue fallita"); break; }
-							//segnale
-							if ((err = pthread_cond_signal(&cv)) == -1){ LOG_ERR(err, "server_manager: signal error"); break; }
-							printf("nuovo fd client (%d) da cui si attende richiesta inserito in coda\n",fd );
-							//unlock
-							mutex_unlock(&g_mtx, "server_manager: unlock fallita");
-							
-							n_client_conn++; 
-                                          printf("n_client_conn = %d\n", n_client_conn);
-							FD_CLR(fd, &set);
-							fd_num--;
-							close(fd);	
+							//richiesta servita -> thread ritorna fd
+							if (*buf == fd) FD_SET(*buf, &set);
 						}
+					//caso 3: inserisce fd client (connesso)in coda concorrente -> nuova richiesta
+					}else{
+                                     printf("sto servendo fd = %d\n", fd);
+						//lock
+						mutex_lock(&g_mtx, "server_manager: lock fallita");
+						//inserisci richiesta in coda
+						if(enqueue(&conc_queue, fd) == -1){ LOG_ERR(-1, "server_manager: enqueue fallita"); break; }
+						//segnale
+						if ((err = pthread_cond_signal(&cv)) == -1){ LOG_ERR(errno, "server_manager: signal error"); break; }
+						printf("nuovo fd client (%d) da cui si attende richiesta inserito in coda\n",fd );
+						//unlock
+						mutex_unlock(&g_mtx, "server_manager: unlock fallita");
+							
+						n_client_conn++; 
+                                    printf("n_client_conn = %d\n", n_client_conn);
+						FD_CLR(fd, &set);
+						fd_num--;
+						//close(fd);	
 					}
 				}
 			}
@@ -476,13 +470,14 @@ static int worker_openFile(int fd_c)
 	//dati ricevuti 
 
 	//ELABORAZIONE RICHIESTA
-	file* f;
+	file* f = NULL;
 	size_t file_exist = 0;
 	int ret_client = 0;
 	file** file_expelled = NULL;
 
 	//se il file f esiste setta var
-	if((f = cache_research(cache, pathname)) != NULL) file_exist = 1;
+	if((f = cache_research(cache, pathname)) != NULL){ file_exist = 1; printf("worker_openFile: file cercato esistente\n"); }
+	printf("worker_openFile DEBUG: sono qui\n");
 	
 	//casi di errore 
 	if((flags==O_CREATE || flags==(O_CREATE|O_LOCK)) && file_exist ){
@@ -497,9 +492,9 @@ static int worker_openFile(int fd_c)
 	//crea nuovo file in lock
 	if (flags==(O_CREATE|O_LOCK) /*|| flag=O_CREATE*/){ 
       	//creazione di un file vuoto lockato
-            if(cache_insert(&cache, pathname, NULL, 0, id, 0, file_expelled) != 0){ 
+            if(cache_insert(&cache, pathname, NULL, 0, id, file_expelled) != 0){ 
                   LOG_ERR(-1, "server.openFile: creazione file non riuscita");
-                  ret_client = -1;
+                  ret_client = -1; //se l'inserimento non riesce fallisce tutto
             }
 	}
 	//O_LOCK -> file aperto in lock e in scrittura/lettura
