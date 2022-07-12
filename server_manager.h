@@ -5,7 +5,7 @@
 
 
 #define UNIX_PATH_MAX 108
-#define PIPE_MAX_LEN_MSG 1024
+#define PIPE_MAX_LEN_MSG sizeof(int)
 
 //var. settate mediante file config.txt
 static size_t t_workers_num = 0;
@@ -24,8 +24,8 @@ pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 file* cache = NULL; 
 char* socket_name = NULL;
 t_queue* conc_queue = NULL;
-int fd_pipe_read;
-int fd_pipe_write;
+int fd_pipe_read = 0;
+int fd_pipe_write = 0;
 
 //flags segnali di teminazione
 volatile sig_atomic_t sig_intquit = 0;	//SIGINT/SIGQUIT: uscita immediata - non si accettano richieste - chiudere connessioni attive

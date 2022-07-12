@@ -9,10 +9,10 @@
 #include "err_control.h"
 #include "function_c.h"
 typedef unsigned char byte;
-#define O_CREATE 10
-#define O_LOCK 11
+//#define O_CREATE 1
+//#define O_LOCK 2
 enum { NS_PER_SECOND = 1000000000 };
-
+typedef enum {O_CREATE=1, O_LOCK=2} flags;
 //variabili globali
 byte flag_D = 0;
 byte flag_d = 0;
@@ -171,15 +171,14 @@ static int write_request(const char* f_name)
 
 	// openFile -> richiesta di apertura o creazione del file da scrivere
 	// predispone la successiva scrittura e controlla le condizioni necessarie
-
 	//writeFile
-	if (openFile(f_name, O_CREATE|O_LOCK) != -1 ){
+	if (openFile(f_name, (O_CREATE|O_LOCK)) != -1 ){
             //writeFile(f_name, arg_d);					
 		//printf("DEBUG CLIENT: openFile scrittura nuovo file\n");
 		printf("client.write_request: writeFile in progress\n");
 		return 0;
 	}else{
-		printf("client.write_request: NO writeFile\n");
+		printf("client.write_request: openFile per writeFile FALLITA\n");
 	}
 	//appendToFile
 	if (openFile(f_name, O_LOCK) != -1){
@@ -189,7 +188,7 @@ static int write_request(const char* f_name)
 
 		return 0;
       }else{
-		printf("client.write_request: NO appendTofile\n");
+		printf("client.write_request: openFile per appendTofile FALLITA\n");
 	}
 	LOG_ERR(-1, "scrittura impossibile");
 	return -1;
@@ -554,6 +553,7 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 
 int openFile(const char* pathname, int flags)
 {
+	printf("SONO IN OPENFILE LATO CLIENT\n");
       //nota: ogni volta che si invia un'informazione lato client, questa deve essere letta e 
       //confermata la ricezione lato server, e infine ricevuta la conferma lato client
       //protocollo: C/1(invio dato) -> S/2(ricezione dato) S/3 (invio conferma ric. dato) -> C/4(ric. conf. ric dato)
@@ -604,14 +604,17 @@ int openFile(const char* pathname, int flags)
 	ec_meno1(write(fd_sk, buf, sizeof(int)), "client: write fallita");
       //19 riceve: conferma ricezione pid
       ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
-	if(buf != 0) return -1;
+	if(*buf != 0) return -1;
 
 	//dati inviati al server
-	int ret_client;
+	
 	//RICEZIONE ESITO OPENFILE
+	int r;
 	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
+	printf("OPEN FILE CLIENT RETURN r = \n");
 	//se è fallita la openFile -> non ci saranno rimpiazzi
-	if(ret_client == -1){
+	r = *buf;
+	if(r == -1){
 		LOG_ERR(-1, "client: openFile fallita");
 		return -1;
 	}
@@ -641,5 +644,5 @@ int openFile(const char* pathname, int flags)
 		if(arg_D != NULL)
 			writefile_in_dir(path, size_data, data);
 	}
-	return 0;
+	return r;
 }
