@@ -178,15 +178,19 @@ static int write_request(const char* f_name)
 		//printf("DEBUG CLIENT: openFile scrittura nuovo file\n");
 		printf("client.write_request: writeFile in progress\n");
 		return 0;
+	}else{
+		printf("client.write_request: NO writeFile\n");
 	}
 	//appendToFile
-	if (openFile(f_name, 0) != -1){
+	if (openFile(f_name, O_LOCK) != -1){
 	      //append_file(f_name);
 	      //printf("DEBUG CLIENT: openFile scrttura in append\n");
 		printf("client.write_request: appendToFile in progress\n");
 
 		return 0;
-      }
+      }else{
+		printf("client.write_request: NO appendTofile\n");
+	}
 	LOG_ERR(-1, "scrittura impossibile");
 	return -1;
 }
@@ -521,7 +525,7 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 	printf("fd_socket client = %d\n", fd_sk);
 	//ciclo di connessione
       while(connect(fd_sk, (struct sockaddr*)&sa, sizeof(sa)) == -1){
-	//printf("DEBU DEBUG DEBUG sono qui\n");
+		//printf("DEBU DEBUG DEBUG sono qui\n");
     	      if(errno == ENOENT){
 			usleep(msec);
 			//seconda misurazione
@@ -611,30 +615,31 @@ int openFile(const char* pathname, int flags)
 		LOG_ERR(-1, "client: openFile fallita");
 		return -1;
 	}
+
 	//RICEZIONE DEL FILE EVENTUALMENTE ESPULSO
-	*buf = 0;
 	//legge 1 se c'è un file espluso, 0 altrimenti
+	*buf = 0;
 	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
 
-	//len pathname
-	len = 0;
-	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
-	len = *buf;
-	//pathname
-	char path[++len];
-	ec_meno1(read(fd_sk, buf, sizeof(char)*len), "client: read fallita");
-	path[len+1] = '\0';
-	//size data
-	size_t size_data;
-	ec_meno1(read(fd_sk, buf, sizeof(char)*len), "client: read fallita");
-	size_data = *buf;
-	//data
-	char data[size_data];
-	ec_meno1(read(fd_sk, data, sizeof(char)*size_data), "client: read fallita");
-	
-	if(arg_D != NULL){
-		writefile_in_dir(path, size_data, data);
+	if(*buf == 1){
+		//len pathname
+		len = 0;
+		ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
+		len = *buf;
+		//pathname
+		char path[++len];
+		ec_meno1(read(fd_sk, buf, sizeof(char)*len), "client: read fallita");
+		path[len+1] = '\0';
+		//size data
+		size_t size_data;
+		ec_meno1(read(fd_sk, buf, sizeof(char)*len), "client: read fallita");
+		size_data = *buf;
+		//data
+		char data[size_data];
+		ec_meno1(read(fd_sk, data, sizeof(char)*size_data), "client: read fallita");
+		//scrittura file espluso nella directory arg_D
+		if(arg_D != NULL)
+			writefile_in_dir(path, size_data, data);
 	}
-
 	return 0;
 }

@@ -112,7 +112,7 @@ void* start_func(void *arg)
 		}
 
 		op = *buf;
-            printf("DEBUG.start_func: op = %d\n", op); //DEBUG DEBUG DEBUG
+            printf("server_manager.start_func: op = %d\n", op); //DEBUG DEBUG DEBUG
 
             //DEBUG: cosa accade se op == EOF? si entra comunque nel caso default dello switch?
 		
@@ -351,6 +351,7 @@ int main(int argc, char* argv[])
 				}else{
 					//caso 2: si tratta del fd della pipe (I/O con client) -> un thread ha un messaggio
 					if (fd == fd_pipe_read){
+						*buf = 0;
 						if (read(fd_pipe_read, buf, PIPE_MAX_LEN_MSG) == -1){ LOG_ERR(errno, "server_manager: readn fallita"); break; }
 						//si hanno due casi, rispettivamente due messaggi possibili:
 						//client disconnesso (read legge 0) -> thread ritorna -fd
@@ -489,21 +490,19 @@ static int worker_openFile(int fd_c)
 		ret_client = -1;
 	}
 
-	//crea nuovo file in lock
-	if (flags==(O_CREATE|O_LOCK) /*|| flag=O_CREATE*/){ 
-      	//creazione di un file vuoto lockato
+	//crea nuovo file in lock o locka un file esistente -> writeFile/appendToFile
+	if (flags==(O_CREATE|O_LOCK) /*|| flag=O_CREATE*/){
             if(cache_insert(&cache, pathname, NULL, 0, id, file_expelled) != 0){ 
                   LOG_ERR(-1, "server.openFile: creazione file non riuscita");
                   ret_client = -1; //se l'inserimento non riesce fallisce tutto
             }
+	}else{
+		if (flags==O_LOCK && (f->f_lock == 0 || f->f_lock == id ) ){
+            	cache_lockFile(cache, pathname, id);
+			f->f_write = 1;
+			f->f_read = 1;
+     		}
 	}
-	//O_LOCK -> file aperto in lock e in scrittura/lettura
-	if (flags==O_LOCK && (f->f_lock == 0 || f->f_lock == id ) ){
-            cache_lockFile(cache, pathname, id);
-		f->f_write = 1;
-		f->f_read = 1;
-      }
-
 	//INVIO ESITO OPENFILE
 	*buf = ret_client;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
@@ -513,21 +512,20 @@ static int worker_openFile(int fd_c)
 	if (file_expelled != NULL){
 		*buf = 1;
 		ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+		//LEN PATHNAME
+		int len = strlen((*file_expelled)->f_name);
+		*buf = len;
+		ec_meno1(write(fd_c, buf, sizeof(int)), "client: write fallita");
+		//PATHANAME
+		ec_meno1(write(fd_c, (*file_expelled)->f_name, len*sizeof(char)), "client: write fallita");
+		//SIZE DATA
+		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "client: write fallita");
+		//DATA
+		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "client: write fallita");
 	}else{
 		ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	}
-
-	//LEN PATHNAME -> controlla tipi
-	int len = strlen((*file_expelled)->f_name);
-	*buf = len;
-	ec_meno1(write(fd_c, buf, sizeof(int)), "client: write fallita");
-	//PATHANAME
-	ec_meno1(write(fd_c, (*file_expelled)->f_name, len*sizeof(char)), "client: write fallita");
-	//SIZE DATA
-	ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "client: write fallita");
-	//DATA
-	ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "client: write fallita");
-
+	printf("server_manager.openFile: fino a qui tutto bene\n");
 	return 0;
 }
 

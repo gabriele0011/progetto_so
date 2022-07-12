@@ -165,7 +165,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id, file** expelled_file)
 {	
       printf("DEBUG: scrittura %s (%zu byte)... \n", f_name, dim_f);	
-	
+
       //CONTROLLO PRELIMINARE
 	if (cache_capacity < dim_f){
 		LOG_ERR(-1, "cache_writeFile: dimensione file maggiore della capacità della cache");
@@ -174,10 +174,10 @@ int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id,
 
       //INSERIMENTO CON RIMPIAZZO -> gestire puntatore del file rimpiazzato
       if (used_mem+dim_f > cache_capacity || files_in_cache+1 > max_storage_file){
-		printf("rimpiazzo necessario\n");
+		printf("cache_insert: rimpiazzo necessario\n");
 		if ((*expelled_file = replace_to_write(cache, f_name, f_data, dim_f, id
 		)) == NULL){
-			printf("cache_writeFile: scrittura di %s fallita\n", f_name);
+			printf("cache_insert: scrittura di %s fallita\n", f_name);
 			return -1;
             }
             printf("DEBUG: scrittura %s eseguita con rimpiazzo di %s\n", f_name, (*expelled_file)->f_name);
@@ -190,32 +190,31 @@ int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id,
 		return -1;
 	}
 	printf("DEBUG: scrittura %s eseguita\n", f_name);
-    
-	
       cache_capacity_update(dim_f, 1);
       return 0;
 }
-
 //funzioni che si occupano della creazione (in lock) di un file vuoto con eventuale rimpiazzo per la writeFile
 int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id)
 {
+	//printf("cache_enqueue: sono qui\n"); //DEBUG
+	
 	//lista invertita cosi da facilitare l'operazione di estrazione dei file in caso di rimpiazzo (FIFO)
 	//l'inserimento diventa in coda e l'estrazione in testa in O(1) nel caso ottimo
-
 	//CREAZIONE + SETTING
       file* new = NULL;
-	new->next = NULL;
 	ec_null((new = malloc(sizeof(file))), "cache: malloc cache_writeFile fallita");
+	new->next = NULL;
+	new->f_size = dim_f;
+	//len pathname + pathname
 	size_t len_f_name = strlen(f_name);
-	ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "cache: errore calloc");
+	ec_null((new->f_name = calloc(sizeof(char), len_f_name+1)), "cache: errore calloc");
+	new->f_name[len_f_name+1] = '\0';
 	strncpy(new->f_name, f_name, len_f_name);
-      //permessi di scrittura/lettura
+	//permessi di scrittura/lettura
 	new->f_read = 1;
 	new->f_write = 1;
       //lock file
-      if(id != 0 ) new->f_lock = id;
-	else new->f_lock = 0;
-	new->f_size = dim_f;
+      new->f_lock = id;
 
 	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
 		LOG_ERR(errno, "cache: pthread_mutex_init fallita in cache_create_file");
@@ -231,27 +230,22 @@ int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id
 		mutex_unlock(&mtx, "cache: unlock fallita in cache_enqueue");
 		return 0;
 	}
+	mutex_unlock(&mtx, "cache: unlock fallita in cache_enqueue");
 
 	//caso 2: un elemento
+	mutex_lock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");	
 	if((*cache)->next == NULL){
-		if (strcmp((*cache)->f_name, f_name) == 0){
-			printf("cache_enqueue: il file è un duplicato, scrittura fallita\n");
-			mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
-			return -1;
-		}
 		(*cache)->next = new;
-		mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
+		mutex_unlock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");
 		return 0;
 	}
-	mutex_unlock((&mtx), "cache: unlock fallita in cache_enqueue");
 	
-	//caso 3: almeno due elementi (collacazione nodo in testa)
-	mutex_lock(&((*cache)->mtx), "cache: unlock fallita in cache_enqueue");
+	//caso 3: almeno due elementi (collacazione nodo in testa=coda)
 	file* prev = *cache;
 	mutex_lock(&((*cache)->next->mtx), "cache: unlock fallita in cache_enqueue");
 	file* curr = (*cache)->next;
 	file* aux;
-	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
+	while (curr->next != NULL){
 		aux = prev;
 		prev = curr;
 		curr = curr->next;
