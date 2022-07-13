@@ -185,7 +185,6 @@ static int write_request(const char* f_name)
 	      //append_file(f_name);
 	      //printf("DEBUG CLIENT: openFile scrttura in append\n");
 		printf("client.write_request: appendToFile in progress\n");
-
 		return 0;
       }else{
 		printf("client.write_request: openFile per appendTofile FALLITA\n");
@@ -471,7 +470,6 @@ static void parser(int dim, char** array){
 		}
 	}
 }
-
 int main(int argc, char* argv[]){
 	
 	//controllo su argc
@@ -553,7 +551,9 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 
 int openFile(const char* pathname, int flags)
 {
-	printf("SONO IN OPENFILE LATO CLIENT\n");
+	printf("CLIENT/OPENFILE: chiamata con flags: ");
+	if(flags==(O_CREATE|O_LOCK)) printf("O_CREATE|O_LOCK\n");
+	if(flags==O_LOCK) printf("O_LOCK\n");
       //nota: ogni volta che si invia un'informazione lato client, questa deve essere letta e 
       //confermata la ricezione lato server, e infine ricevuta la conferma lato client
       //protocollo: C/1(invio dato) -> S/2(ricezione dato) S/3 (invio conferma ric. dato) -> C/4(ric. conf. ric dato)
@@ -611,11 +611,10 @@ int openFile(const char* pathname, int flags)
 	//RICEZIONE ESITO OPENFILE
 	int r;
 	ec_meno1(read(fd_sk, buf, sizeof(int)), "client: read fallita");
-	printf("OPEN FILE CLIENT RETURN r = \n");
 	//se è fallita la openFile -> non ci saranno rimpiazzi
 	r = *buf;
 	if(r == -1){
-		LOG_ERR(-1, "client: openFile fallita");
+		//LOG_ERR(-1, "client: openFile fallita");
 		return -1;
 	}
 
