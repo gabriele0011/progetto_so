@@ -12,11 +12,13 @@ void create_cache(int mem_size, int max_file_in_cache)
 }
 file* cache_research(file* cache, char* f_name)
 {
+	printf("CACHE REASEARCH: cerco %s\n", f_name);
 	file* node = NULL;
 	//CODA VUOTA
 	mutex_lock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	if (cache == NULL){
 		mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
+		printf("CACHE REASEARCH: fine ricerca %s\n", f_name);
 		return NULL;
 	}
 	mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
@@ -25,7 +27,11 @@ file* cache_research(file* cache, char* f_name)
 	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 	if (cache->next == NULL && strcmp(cache->f_name, f_name) == 0){
 		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+		printf("CACHE REASEARCH: fine ricerca %s\n", f_name);
 		return cache;
+	}else{
+		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
+		return NULL;
 	}
 	
 	//CODA CON DUE O PIU ELEMENTI
@@ -35,8 +41,8 @@ file* cache_research(file* cache, char* f_name)
 
 	file* aux;
 	int found = 0;
-	while (curr->next != NULL){
-		if(strcmp(prev->f_name, f_name) != 0){
+	while (curr->next != NULL && !found){
+		if(strcmp(prev->f_name, f_name) == 0){
 			found = 1;
 			node = prev;
 		}
@@ -60,6 +66,7 @@ file* cache_research(file* cache, char* f_name)
 	}
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
+	printf("CACHE REASEARCH: fine ricerca %s\n", f_name);
 	if (!found) return NULL;
 	else return node;
 }

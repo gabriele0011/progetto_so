@@ -11,11 +11,13 @@
 typedef enum {O_CREATE=1, O_LOCK=2} flags;
 
 static int worker_openFile(int fd_c);
+static int worker_writeFile(int x){return 0;}
+static int worker_appendToFile(int x){return 0;}
+//arrivare qui entro oggi
+
 static int worker_closeFile(int x){return 0;}
 static int worker_readFile(int x){return 0;}
 static int worker_readNFiles(int x){return 0;}
-static int worker_writeFile(int x){return 0;}
-static int worker_appendToFile(int x){return 0;}
 static int worker_lockFile(int x){return 0;}
 static int worker_unlockFile(int x){return 0;}
 static int worker_removeFile(int x){return 0;}
@@ -85,6 +87,7 @@ static void handler_sighup(int signum){
 
 void* start_func(void *arg)
 {
+	
 	int* buf = NULL;
 	ec_null((buf = malloc(sizeof(int))), "start_func: malloc fallita");
 	*buf = 0;
@@ -97,24 +100,24 @@ void* start_func(void *arg)
 		//pop richiesta dalla coda concorrente
 		while (((*buf = dequeue(&conc_queue)) == -1) && !sig_intquit){
                   //wait
-			if ( (err = pthread_cond_wait(&cv, &g_mtx)) == -1){
+			if ( (err = pthread_cond_wait(&cv, &g_mtx)) != 0){
 				LOG_ERR(err, "start_func: phtread_cond_wait fallita");
 				exit(EXIT_FAILURE);
 			}
 		}
-		mutex_unlock(&g_mtx, "start_func: lock fallita");
-            //salvo il client
+		mutex_unlock(&g_mtx, "start_func: unlock fallita");
+            
+		//salvo il client in fd_c
 		fd_c = *buf;
-		//ripristino buf
             *buf = 0;
-
-		//leggi la richiesta di fd_c
+		//leggi la richiesta di fd_c se fallisce torna 0 al manager
 		if (read(fd_c, buf, sizeof(int)) == -1){
-			LOG_ERR(-1, "start_func: read su client");
+			LOG_ERR(errno, "start_func: read su fd_client fallita -> client disconnesso");
 			*buf = 0;
 		}
 		op = *buf;
-		//printf("server_manager.start_func: fd_c =  %d / richiesta = %d\n", fd_c, op); //DEBUG DEBUG DEBUG
+		printf("START_FUNC: op = %d\n", op);
+		printf("START_FUNC: fd_c =  %d - richiesta = %d\n", fd_c, op); //DEBUG DEBUG DEBUG
 		
 		//client disconnesso
 		if (op == EOF || op == 0){
@@ -122,26 +125,26 @@ void* start_func(void *arg)
 			*buf = fd_c;
 			*buf = fd_c*(-1);
 			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) != -1){
-				LOG_ERR(-1, "start_func: write su pipe fallita");
+				LOG_ERR(errno, "start_func: write su pipe fallita");
 			}
 		}
 		//openFile
 		if( op == 1){
-			if (worker_openFile(fd_c) == -1){
-				LOG_ERR(-1, "start_func: (1) worker_openFile fallita");
+			if ( worker_openFile(fd_c) == -1){ //errno da settare nella funzione chiamata
+				LOG_ERR(errno, "start_func: (1) worker_openFile fallita");
 				exit(EXIT_FAILURE);
 			}
 			//BUG HERE BUG HERE BUG HERE BUG HERE
 			*buf = fd_c;
 			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1){
-				LOG_ERR(EPIPE, "start_func: (1) write su pipe fallita");
+				LOG_ERR(errno, "start_func: (1) write su pipe fallita");
 			}
-			printf("DEBUG.start_func: op %d dal client %d terminata\n", op, fd_c);
+			printf("START_FUNC:: op %d dal client %d terminata\n", op, fd_c); //DEBUG
 		}
 		//closeFile
-		if( op == 1){
-			if (worker_closeFile(fd_c) == -1){
-				LOG_ERR(-1, "start_func: (2) worker_closeFile fallita");
+		if( op == 2){
+			if ( worker_closeFile(fd_c) == -1){ 
+				LOG_ERR(errno, "start_func: (2) worker_closeFile fallita");
 				exit(EXIT_FAILURE);
 			}
 			*buf = fd_c;
@@ -230,7 +233,8 @@ void* start_func(void *arg)
 
       printf("WTF WTF\n");
 	if(buf) free(buf);
-	pthread_exit((void*)0);
+	//pthread_exit((void*)0);
+	return NULL;
 }
 
 
@@ -271,10 +275,7 @@ int main(int argc, char* argv[])
 	if((err = pipe(pfd)) == -1) { LOG_ERR(errno, "server_manager: creating pipe"); }
 	fd_pipe_read = pfd[0];
 	fd_pipe_write = pfd[1];
-	
-      //printf("Pipe write fd: %d\n\n", fd_pipe_write);
-	//printf("Pipe read fd: %d\n", fd_pipe_read);
-	
+
       /************** THREAD POOL  **************/
 	pthread_t thread_workers_arr[t_workers_num];
 	for(int i = 0; i < t_workers_num; i++){
@@ -296,15 +297,13 @@ int main(int argc, char* argv[])
       struct sockaddr_un sa;
 	strncpy(sa.sun_path, socket_name, l);
 	sa.sun_family = AF_UNIX;
-      //printf("socket_name: %s / strlen(socket_name) = %zu / l = %d\n", socket_name, strlen(socket_name), l);
-      //printf("sa.sun_path: %s / strlen(sa.sun_path) = %zu\n", sa.sun_path, strlen(sa.sun_path));
 
       //socket/bind/listen
       ec_meno1((fd_skt = socket(AF_UNIX, SOCK_STREAM, 0)), "server_manager: socket() fallita");
 	ec_meno1(bind(fd_skt, (struct sockaddr*)&sa, sizeof(sa)), "server_manager: bind() fallita");
 	ec_meno1(listen(fd_skt, SOMAXCONN), "server_manager: listen() fallita");
-	printf("server in ascolto\n\n");
-	
+	printf("SERVER: server in ascolto\n\n");
+
       //aggiornamento fd_num
 	if (fd_skt > fd_num) fd_num = fd_skt;
 	//inizializzazione e aggiornamento maschera
@@ -313,7 +312,9 @@ int main(int argc, char* argv[])
 	FD_SET(fd_pipe_read, &set);
       int n_client_conn = 0;
 	int *buf = malloc(sizeof(int));
-
+	int fd;
+	if(fd_skt>fd_pipe_read) fd_num=fd_skt;     
+  	else fd_num=fd_pipe_read;    
 
 
       /************** LOOP **************/
@@ -329,40 +330,45 @@ int main(int argc, char* argv[])
 			break;
 		}
 		//controlla fd intercettati da select
-		for (int fd = 0; fd <= fd_num; fd++){
+		for (fd = 0; fd <= fd_num; fd++){
+			//printf("SERVER.mainloop: fd corrente =  %d - fd_max = %d\n", fd, fd_num);//DEBUG
 			if (FD_ISSET(fd, &rdset)){
-				//printf("intercettato fd = %d\n",fd);
+				printf("SERVER.mainloop: fd ISSET =  %d\n", fd);//DEBUG
 				//CASO 1: si tratta del fd_skt -> tentativo di connessione da parte di un client
 				if (fd == fd_skt){ 
+					printf("SERVER.mainloop: fd socket =  %d\n", fd);//DEBUG
 					//printf("fd = %d è il fd socket connect\n\n", fd); DEBUG
 					//CONTROLLO SEGNALE sig_hup
 					if (!sig_hup){
 						//stabilisci connessione con un client ridirigendolo sulla nuova socket dedicata
 						if ((fd_c = accept(fd_skt, NULL, 0)) == -1){ LOG_ERR(errno, "server_manager: accept fallita"); break; }
 						FD_SET(fd_c, &set);
+						//si possono contare il numero di client connessi qui
+						n_client_conn++; 
+						printf("SERVER.mainloop: n_client_conn++ = %d\n", n_client_conn);
 						if (fd_c > fd_num) fd_num = fd_c;
-                                    //printf("DEBUG.loop: fd_c = %d aggiunto nel rdset\n", fd_c); //DEBUG
+                                   	printf("SERVER.mainloop: accettata connessione (con fd = %d) fd_c = %d\n",fd, fd_c); //DEBUG
 					}
 				}else{
 					//caso 2: si tratta del fd della pipe (I/O con client) -> un thread ha un messaggio
 					if (fd == fd_pipe_read){
+						printf("SERVER.mainloop: fd pipe =  %d\n", fd);//DEBUG
 						*buf = 0;
 						if (read(fd_pipe_read, buf, PIPE_MAX_LEN_MSG) == -1){ LOG_ERR(errno, "server_manager: read fallita"); break; }
-						printf("ATTENZIONEEEE\n");
-
+						if(!buf || !(*buf)) {LOG_ERR(EPIPE, "server_manger: read non valida"); break;}
 						// CASO 1: client disconnesso (read legge 0) o thread ritorna -fd
-						if (*buf <= 0){
-							printf("server_manager: client disconnesso\n");
+						if (*buf < 0){
+							printf("SERVER.mainloop: client %d disconnesso\n", *buf); //DEBUG
 							*buf = (*buf)*(-1);
 							FD_CLR(*buf, &set);
 							close(*buf);
 							n_client_conn--;
-							printf("n_client_conn = %d\n", n_client_conn);
+							printf("SERVER.mainloop: n_client_conn-- = %d\n", n_client_conn);
 
 						}else{
 							// CASO 2: richiesta servita -> thread ritorna fd
 							FD_SET(*buf, &set);
-							printf("richiesta servita, client ancora attivo\n");
+							printf("SERVER.mainloop: richiesta servita, reinserimento client %d\n\n\n", *buf);
 						}
 					//caso 3: inserisce fd client (connesso)in coda concorrente -> nuova richiesta
 					}else{
@@ -376,11 +382,10 @@ int main(int argc, char* argv[])
 						//printf("nuovo fd client (%d) da cui si attende richiesta inserito in coda\n",fd ); //DEBUG
 						//unlock
 						mutex_unlock(&g_mtx, "server_manager: unlock fallita");
+						printf("SERVER.mainloop: fd=%d in coda richiesta (espulso da RD_SET)\n", fd); //DEBUG
 						//richiesta fd inviata - aggiornamento maschera	
 						FD_CLR(fd, &set);
-						fd_num--;
-						n_client_conn++; 
-                                    printf("n_client_conn = %d\n", n_client_conn);
+						//si possono contare le richieste qui
 					}
 				}
 			}
@@ -418,6 +423,8 @@ int main(int argc, char* argv[])
 //OPEN FILE
 static int worker_openFile(int fd_c)
 {
+	printf("\n\n"); //DEBUG
+	printf("SERVER.openFile: qui\n"); //DEBUG
 	int* buf;
    	ec_null( (buf = malloc(sizeof(int))), "server_worker: malloc fallita");
     	*buf = 0;
@@ -429,17 +436,23 @@ static int worker_openFile(int fd_c)
     	//2 comunica: richiesta openFile (1) accettata
 	*buf = 1;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+	printf("SERVER.openFile: richiesta accettata = %d\n", *buf); //DEBUG
 	
+
 	// comunicazione stabilita OK
 	// acquisizione dati richiesta dal client
 
 	//LEN PATHNAME
 	//5 riceve: lunghezza del pathname
 	ec_meno1(read(fd_c, buf, sizeof(int)), "server_worker: read fallita");
+	//BUG HERE !!!!!
+	printf("BUG HERE 1\n");
 	len_pathname = *buf;
 	//6 risponde: ricevuto lunghezza pathname
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");	
+	printf("SERVER.openFile: len pathname ok\n"); //DEBUG
+
 
 	//PATHNAME
 	//allocazione mem pathname
@@ -450,6 +463,8 @@ static int worker_openFile(int fd_c)
 	//10 comunica: ricevuto pathname
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+	printf("SERVER.openFile: pathname ok\n"); //DEBUG
+
 
 	//FLAGS
 	//13 riceve: flags
@@ -458,6 +473,9 @@ static int worker_openFile(int fd_c)
 	//14 comunica recevuti flags
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+		printf("SERVER.openFile: flags ok\n"); //DEBUG
+
+
 
 	//IDENTIFICAZIONE PROCESSO CLIENT
 	//17 riceve: pid
@@ -466,6 +484,9 @@ static int worker_openFile(int fd_c)
 	//18 comunica: recevuto pid
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
+			printf("SERVER.openFile: id ok\n"); //DEBUG
+
+
 
 	//dati ricevuti 
 
@@ -477,9 +498,10 @@ static int worker_openFile(int fd_c)
 
 	//se il file f esiste setta var
 	if((f = cache_research(cache, pathname)) != NULL){ file_exist = 1; printf("worker_openFile: file cercato esistente\n"); }
-	printf("SERVER/OPENFILE - worker_openFile: chiamata con flags: ");
+	printf("SERVER.openFile flags: ");
 	if(flags==(O_CREATE|O_LOCK)) printf("O_CREATE|O_LOCK\n");
 	if(flags==O_LOCK) printf("O_LOCK\n");
+	printf("SERVER.openFile pathname: %s\n", pathname);
 
 	/*
 	//casi di errore 
@@ -507,7 +529,7 @@ static int worker_openFile(int fd_c)
 		}
 	}
 	//INVIO ESITO OPENFILE
-	printf("D E B U G (B) - worker_openFile: esito = %d\n", ret_client);
+	printf("SERVER.opneFile: ESITO = %d\n", ret_client);
 	*buf = ret_client;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	
@@ -529,6 +551,8 @@ static int worker_openFile(int fd_c)
 	}else{
 		ec_meno1(write(fd_c, buf, sizeof(int)), "server_worker: write fallita");
 	}
+
+	if(buf) free(buf);
 	return 0;
 }
 
