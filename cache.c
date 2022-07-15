@@ -725,8 +725,6 @@ int cache_readNFile(file* cache, int N, int id, file*** array)
 }
 
 
-//test main
-/*
 
 void print_queue(file* cache)
 {
@@ -737,7 +735,9 @@ void print_queue(file* cache)
 		printf("\n");
 	}
 }
+/*
 
+//test main
 int main(){
 
 	file* cache = NULL;
