@@ -168,7 +168,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 	return x;
 }
 
-//funzioni per scrittura con -W
+//funzioni per scrittura con -w/-W
 int cache_insert(file** cache, char* f_name, char* f_data, size_t dim_f, int id, file** expelled_file)
 {	
       printf("(CACHE) - cache_insert: scrittura %s (%zu byte)... \n", f_name, dim_f);	

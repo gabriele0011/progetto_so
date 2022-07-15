@@ -11,13 +11,12 @@
 typedef enum {O_CREATE=1, O_LOCK=2} flags;
 
 static int worker_openFile(int fd_c);
-static int worker_writeFile(int );
+static int worker_writeFile(int fd_c);
+static int worker_appendToFile(int fd_c);
 //arrivare qui entro oggi
-
-static int worker_appendToFile(int x){return 0;}
-static int worker_closeFile(int x){return 0;}
 static int worker_readFile(int x){return 0;}
 static int worker_readNFiles(int x){return 0;}
+static int worker_closeFile(int x){return 0;}
 static int worker_lockFile(int x){return 0;}
 static int worker_unlockFile(int x){return 0;}
 static int worker_removeFile(int x){return 0;}
@@ -150,20 +149,8 @@ void* start_func(void *arg)
 				LOG_ERR(EPIPE, "start_func: (3) write su pipe fallita");
 			}
 		}
-		//closeFile
-		if( op == 3){
-			if ( worker_closeFile(fd_c) == -1){ 
-				LOG_ERR(errno, "start_func: (2) worker_closeFile fallita");
-				exit(EXIT_FAILURE);
-			}
-			*buf = fd_c;
-			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1){
-				LOG_ERR(EPIPE, "start_func: (2) write su pipe fallita");
-			}
-		}
-		
 		//appendToFile
-		if (op == 4){
+		if (op == 3){
 			if (worker_appendToFile(fd_c) == -1){
 				LOG_ERR(-1, "start_func: (4) worker_appendToFile fallita");
 				exit(EXIT_FAILURE);
@@ -173,6 +160,17 @@ void* start_func(void *arg)
 				LOG_ERR(EPIPE, "start_func: (4) write su pipe fallita");
 			}
 		}	
+		//closeFile
+		if( op == 4){
+			if ( worker_closeFile(fd_c) == -1){ 
+				LOG_ERR(errno, "start_func: (2) worker_closeFile fallita");
+				exit(EXIT_FAILURE);
+			}
+			*buf = fd_c;
+			if (write(fd_pipe_write, buf, PIPE_MAX_LEN_MSG) == -1){
+				LOG_ERR(EPIPE, "start_func: (2) write su pipe fallita");
+			}
+		}
 		//readFile
 		if (op == 5){
 			if (worker_readFile(fd_c) == -1){
@@ -311,7 +309,6 @@ int main(int argc, char* argv[])
 	int fd;
 	if(fd_skt>fd_pipe_read) fd_num=fd_skt;     
   	else fd_num=fd_pipe_read;    
-
 
       /************** LOOP **************/
 	while (!sig_intquit){
@@ -507,7 +504,7 @@ static int worker_openFile(int fd_c)
 			if(cache_lockFile(cache, pathname, id) == -1){
 				LOG_ERR(-1, "openFile: lock fallita");
 				goto of_clean;
-			}
+			}else printf("(SERVER) - openFile: file %s lockato da %d\n", pathname, id);
 			f->f_write = 1;
 			f->f_read = 1;
      		}else	ret_client = -1;
@@ -624,19 +621,27 @@ static int worker_writeFile(int fd_c)
 	*buf = 0;
 	ec_meno1(write(fd_c, buf, sizeof(int)), "writeFile: write fallita");
 
-
+	
 	//ELABORAZIONE
+	//scrittura del file
 	if ((ret_client = cache_appendToFile(&cache, pathname, data, file_size, id, file_expelled)) == -1){
 		LOG_ERR(-1, "writeFile: cache_appendToFile fallita");
 		goto wf_clean;
 	}
+	//unlock del file (precedentemente lockato per essere scritto)
+	if (cache_unlockFile(cache, pathname, id) == -1){
+		LOG_ERR(-1, "writeFile: cache_unlock fallita");
+		goto wf_clean;
+	}
+	printf("(SERVER) - writeFile: stampa cache: ");
+	print_queue(cache);
 
 	//INVIO ESITO WRITE FILE
 	//20 (comunica): esito openFile
 	*buf = ret_client;
-	ec_meno1(write(fd_c, buf, sizeof(int)), "openFile: write 6 fallita");
+	ec_meno1(write(fd_c, buf, sizeof(int)), "writeFile: write 6 fallita");
 	//23 (riceve): conferma ricezione
-	ec_meno1(read(fd_c, buf, sizeof(int)), "openFile: read fallita");
+	ec_meno1(read(fd_c, buf, sizeof(int)), "writeFile: read fallita");
 	if(*buf != 0 ){ printf("non stanno comunicando\n"); }
 
 
@@ -644,19 +649,19 @@ static int worker_writeFile(int fd_c)
 	if (file_expelled == NULL){
 		//nessun file espulso
 		*buf = 0;
-		ec_meno1(write(fd_c, buf, sizeof(int)), "openFile: write 11 fallita");
+		ec_meno1(write(fd_c, buf, sizeof(int)), "writeFile: write 11 fallita");
 	}else{
 		//c'è un file espluso
 		*buf = 1;
-		ec_meno1(write(fd_c, buf, sizeof(int)), "openFile: write fallita");
+		ec_meno1(write(fd_c, buf, sizeof(int)), "writeFile: write fallita");
 		//LEN PATHNAME
 		int len = strlen((*file_expelled)->f_name);
 		*buf = len;
-		ec_meno1(write(fd_c, buf, sizeof(int)), "openFile: write 7 fallita");
+		ec_meno1(write(fd_c, buf, sizeof(int)), "writeFile: write 7 fallita");
 		//PATHANAME
-		ec_meno1(write(fd_c, (*file_expelled)->f_name, len*sizeof(char)), "openFile: write 8 fallita");
+		ec_meno1(write(fd_c, (*file_expelled)->f_name, len*sizeof(char)), "writeFile: write 8 fallita");
 		//SIZE DATA
-		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "openFile: write 9 fallita");
+		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "writeFile: write 9 fallita");
 		//DATA
 		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "openFile: write 10 fallita");
 	}
@@ -667,6 +672,132 @@ static int worker_writeFile(int fd_c)
 	return 0;
 	
 	wf_clean:
+	if(buf) free(buf);
+	if(pathname) free(pathname);
+	if(data) free(data);
+	return -1;
+}
+
+//APPEND TO FILE
+static int worker_appendToFile(int fd_c)
+{
+	printf("(SERVER) - appendToFile: INIZIO (fd_c =  %d)\n", fd_c); //DEBUG
+
+	int* buf;
+   	ec_null( (buf = (int*)malloc(sizeof(int))), "appendToFile: malloc fallita");
+	*buf = 0;
+	int len;
+	char* pathname = NULL;
+	int ret_client;
+	file** file_expelled = NULL;
+
+	//1 -> la prima read viene effettuata nella start_func
+
+	//SETTING RICHIESTA
+    	//2 (comunica): richiesta openFile (cod.1) accettata
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");
+
+
+	// comunicazione stabilita OK
+	// acquisizione dati richiesta dal client:
+
+
+	//LEN PATHNAME
+	//5 (riceve): lunghezza del pathname
+	ec_meno1(read(fd_c, buf, sizeof(int)), "appendToFile: read fallita");
+	len = *buf;
+	//6 risponde: ricevuta
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");	//BUG HERE
+
+
+	//PATHNAME
+	//allocazione mem pathname
+	ec_null((pathname = calloc(sizeof(char), len+1)), "appendToFile: calloc fallita");
+	pathname[len+1] = '\0';
+	//9 riceve: pathname
+	ec_meno1(read(fd_c, pathname, sizeof(char)*(len)), "appendToFile: read fallita"); //inserisci controllo esito read
+	//10 (comunica): ricevuto
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");
+
+
+	//DIMENSIONE DEL FILE
+	int file_size;
+	//5 (riceve): lunghezza del pathname
+	ec_meno1(read(fd_c, buf, sizeof(int)), "appendToFile: read fallita");
+	file_size = *buf;
+	//6 risponde: ricevuta
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");
+
+
+	//DATA FILE
+	char* data = NULL;
+	ec_null((data = (char*)calloc(sizeof(char), file_size)), "appendToFile: calloc fallita");
+	ec_meno1(read(fd_c, data, sizeof(char)*file_size), "appendToFile: read fallita");
+	//x (comunica): ricevuto
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");
+
+
+	//IDENTIFICAZIONE PROCESSO CLIENT
+	//17 (riceve): pid
+	ec_meno1(read(fd_c, buf, sizeof(int)), "appendToFile: read fallita");
+	int id = *buf;
+	//18 (comunica): recevuto
+	*buf = 0;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");
+
+	
+	//ELABORAZIONE
+	if ((ret_client = cache_appendToFile(&cache, pathname, data, file_size, id, file_expelled)) == -1){
+		LOG_ERR(-1, "appendToFile: cache_appendToFile fallita");
+		goto atf_clean;
+	}
+	if (cache_unlockFile(cache, pathname, id) == -1){
+		LOG_ERR(-1, "writeFile: cache_unlock fallita");
+		goto atf_clean;
+	}
+	printf("(SERVER) - writeFile: stampa cache: ");
+	print_queue(cache);
+	//INVIO ESITO WRITE FILE
+	//20 (comunica): esito openFile
+	*buf = ret_client;
+	ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write 6 fallita");
+	//23 (riceve): conferma ricezione
+	ec_meno1(read(fd_c, buf, sizeof(int)), "appendToFile: read fallita");
+	if(*buf != 0 ){ printf("non stanno comunicando\n"); }
+
+
+	//INVIO FILE EVENTUALMENTE ESPULSO (1) o NULLA (0)
+	if (file_expelled == NULL){
+		//nessun file espulso
+		*buf = 0;
+		ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write 11 fallita");
+	}else{
+		//c'è un file espluso
+		*buf = 1;
+		ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write fallita");
+		//LEN PATHNAME
+		int len = strlen((*file_expelled)->f_name);
+		*buf = len;
+		ec_meno1(write(fd_c, buf, sizeof(int)), "appendToFile: write 7 fallita");
+		//PATHANAME
+		ec_meno1(write(fd_c, (*file_expelled)->f_name, len*sizeof(char)), "appendToFile: write 8 fallita");
+		//SIZE DATA
+		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "appendToFile: write 9 fallita");
+		//DATA
+		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "openFile: write 10 fallita");
+	}
+
+	if(buf) free(buf);
+	if(pathname) free(pathname);
+	if(data) free(data);
+	return 0;
+	
+	atf_clean:
 	if(buf) free(buf);
 	if(pathname) free(pathname);
 	if(data) free(data);
