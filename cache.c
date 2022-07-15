@@ -168,8 +168,8 @@ int cache_removeFile(file** cache, char* f_name, int id)
 	return x;
 }
 
-//scrittura di un file in cache -> composta da cache_writeFile(controlla la capacità della cache) + cache_enqueue(crea effettiv. il file)
-int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id, file** expelled_file)
+//funzioni per scrittura con -W
+int cache_insert(file** cache, char* f_name, char* f_data, size_t dim_f, int id, file** expelled_file)
 {	
       printf("(CACHE) - cache_insert: scrittura %s (%zu byte)... \n", f_name, dim_f);	
 
@@ -200,8 +200,7 @@ int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id,
       cache_capacity_update(dim_f, 1);
       return 0;
 }
-//funzioni che si occupano della creazione (in lock) di un file vuoto con eventuale rimpiazzo per la writeFile
-int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id)
+int cache_enqueue(file** cache, char* f_name, char* f_data, size_t dim_f, int id)
 {
 	//printf("cache_enqueue: sono qui\n"); //DEBUG
 	
@@ -265,7 +264,7 @@ int cache_enqueue(file** cache, char* f_name, byte* f_data, size_t dim_f, int id
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_enqueue");
 	return 0;
 }
-file* replace_to_write(file** cache, char* f_name, byte* f_data, size_t dim_f, int id)
+file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, int id)
 {
 	//cerca nodo che rispetti condizione di rimpiazzo (size_old >= size_new && file non lockato o lockato dallo stesso processo)
 	//caso peggiore O(n), caso migliore O(1) (testa e coda sono invertite)
@@ -369,50 +368,57 @@ file* replace_to_write(file** cache, char* f_name, byte* f_data, size_t dim_f, i
 }
 
 //scrittura in append
-int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, int id)
+int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, int id, file** expelled_file)
 {
-	file* rep_node; //nodo da restituire al server worker
-
+	printf("(CACHE) - cache_appendToFile: INIZIO\n");
 	//controllo capacità memoria per rimpiazzo
 	if(used_mem+dim_f > cache_capacity){
-		if((rep_node = replace_to_append(cache, f_name, f_data, dim_f, id)) == NULL){
-			printf("cache_writeFile: scrittura in append su %s (%zubyte) fallita\n", f_name, dim_f);
+		if((*expelled_file = replace_to_append(cache, f_name, f_data, dim_f, id)) == NULL){
+			printf("cache_appendToFile: scrittura in append su %s (%zubyte) fallita\n", f_name, dim_f);
 			return -1;
 		}else{
-			printf("cache_appendToFile: append riuscita - file rimpiazzato: %s\n", rep_node->f_name);
+			printf("cache_appendToFile: append riuscita - file rimpiazzato: %s\n", (*expelled_file)->f_name);
 			return 0;
 		}
 	}
-	//printf("DEBUG: scrittura in append su %s...(%zu byte)\n", f_name, dim_f);
-	file* node;
-	size_t found = 0;
-	//scrittura senza rimpiazzo
-	mutex_lock(&((*cache)->mtx), "cache_appendToFile: lock fallita");
-	file* prev = *cache;
-	mutex_lock(&((*cache)->next->mtx), "cache_appendToFile: unlock fallita");
-	file* curr = (*cache)->next;
-	file* aux = prev;
+	printf("(CACHE) - cache_appendToFile: scrittura in append senza rimpiazzo su %s...(%zu byte)\n", f_name, dim_f);
 	
-	while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
-		aux = prev;
-		prev = curr;
-		curr = curr->next;
-		mutex_lock(&(curr->mtx), "cache_appendToFile: lock fallita");
-		mutex_unlock(&(aux->mtx), "cache_appendToFile: unlock fallita");
-	}
-		
-	if (strcmp(prev->f_name, f_name) == 0){
+	size_t found = 0;
+	file* node;
+	
+	//CODA CON UN ELEMENTO
+	mutex_lock(&((*cache)->mtx), "cache: lock fallita in cache_duplicate_control");
+	if ((*cache)->next == NULL && strcmp((*cache)->f_name, f_name) == 0){
+		mutex_unlock(&((*cache)->mtx), "cache: lock fallita in cache_duplicate_control");
 		found = 1;
-		node = prev;
+		node = *cache;
 	}else{
-		if (strcmp(curr->f_name, f_name) == 0){
-			found = 1;
-			node = curr;
+		//CODA CON DUE O PIU ELEMENTI
+		file* prev = *cache;
+		mutex_lock(&((*cache)->next->mtx), "cache_appendToFile: unlock fallita");
+		file* curr = (*cache)->next;
+		file* aux = prev;
+	
+		while (curr->next != NULL && strcmp(prev->f_name, f_name) != 0){
+			aux = prev;
+			prev = curr;
+			curr = curr->next;
+			mutex_lock(&(curr->mtx), "cache_appendToFile: lock fallita");
+			mutex_unlock(&(aux->mtx), "cache_appendToFile: unlock fallita");
 		}
+		
+		if (strcmp(prev->f_name, f_name) == 0){
+			found = 1;
+			node = prev;
+		}else{
+			if (strcmp(curr->f_name, f_name) == 0){
+				found = 1;
+				node = curr;
+			}
+		}
+		mutex_unlock(&(prev->mtx), "cache_appendToFile: unlock fallita");
+		mutex_unlock(&(curr->mtx), "cache_appendToFile: unlock fallita");
 	}
-	mutex_unlock(&(prev->mtx), "cache_appendToFile: unlock fallita");
-	mutex_unlock(&(curr->mtx), "cache_appendToFile: unlock fallita");
-
 	if (found){
 		mutex_lock(&(node->mtx), "cache_appendToFile: lock fallita");
 		size_t new_size = dim_f + node->f_size;
@@ -424,16 +430,15 @@ int cache_appendToFile(file** cache, char* f_name, byte* f_data, size_t dim_f, i
 		}
 		node->f_size = new_size;
 		mutex_unlock(&(node->mtx), "cache_appendToFile: lock fallita");
-		cache_capacity_update(dim_f, 1);
+		cache_capacity_update(dim_f, 0);
 		printf("DEBUG: scrittura in append su %s eseguita\n", node->f_name);
 	}
 	
-
 	//printf("DEBUG: scrittura in append riuscita - rimpiazzato: %s\n", rep_node->f_name);
 	if (found) return 0;
 	else return -1;
 }
-file* replace_to_append(file** cache, char* f_name, byte* f_data, size_t dim_f, int id)
+file* replace_to_append(file** cache, char* f_name, char* f_data, size_t dim_f, int id)
 {
 	file* rep;
 	file* node = NULL;
@@ -582,7 +587,7 @@ int cache_unlockFile(file* cache, char* f_name, int id)
 }
 
 //lettura singolo file e lettura di N files
-int cache_readFile(file* cache, char* f_name, byte** buf, size_t* dim_buf, int id)
+int cache_readFile(file* cache, char* f_name, char** buf, size_t* dim_buf, int id)
 {
 	
 	//controllo coda vuota
@@ -723,8 +728,6 @@ int cache_readNFile(file* cache, int N, int id, file*** array)
 	printf("DEBUG: file letti = %zu\n", scan);
 	return scan;
 }
-
-
 
 void print_queue(file* cache)
 {
