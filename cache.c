@@ -12,13 +12,13 @@ void create_cache(int mem_size, int max_file_in_cache)
 }
 file* cache_research(file* cache, char* f_name)
 {
-	printf("CACHE REASEARCH: cerco %s\n", f_name);
+	printf("CACHE - cache_research: cerco %s\n", f_name);
 	file* node = NULL;
 	//CODA VUOTA
 	mutex_lock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	if (cache == NULL){
 		mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
-		printf("CACHE REASEARCH: fine ricerca %s\n", f_name);
+		printf("CACHE - cache_research: fine ricerca %s\n", f_name);
 		return NULL;
 	}
 	mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
@@ -27,7 +27,7 @@ file* cache_research(file* cache, char* f_name)
 	mutex_lock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
 	if (cache->next == NULL && strcmp(cache->f_name, f_name) == 0){
 		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
-		printf("CACHE REASEARCH: fine ricerca %s\n", f_name);
+		printf("CACHE - cache_research: fine ricerca %s\n", f_name);
 		return cache;
 	}else{
 		mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
@@ -66,7 +66,7 @@ file* cache_research(file* cache, char* f_name)
 	}
 	mutex_unlock(&(prev->mtx), "cache: unlock fallita in cache_duplicate_control");
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
-	printf("CACHE REASEARCH: fine ricerca %s\n", f_name);
+	printf("CACHE - cache_research: fine ricerca %s\n", f_name);
 	if (!found) return NULL;
 	else return node;
 }
@@ -75,7 +75,7 @@ void cache_capacity_update(int dim_file, int new_file_or_not)
       mutex_lock(&mtx, "cache: lock fallita in cache_capacity_update");
 	used_mem = used_mem + dim_file;
 	files_in_cache += new_file_or_not;
-	printf("cache used memory = %lu di %zu - files in cache = %zu\n", used_mem, cache_capacity, files_in_cache);
+	printf("(CACHE) - cache used memory = %lu di %zu - files in cache = %zu\n", used_mem, cache_capacity, files_in_cache);
 	mutex_unlock(&mtx, "cache: unlock fallita in cache_capacity_update");
 }
 file* cache_dealloc(file* cache)
@@ -171,7 +171,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 //scrittura di un file in cache -> composta da cache_writeFile(controlla la capacità della cache) + cache_enqueue(crea effettiv. il file)
 int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id, file** expelled_file)
 {	
-      printf("DEBUG: scrittura %s (%zu byte)... \n", f_name, dim_f);	
+      printf("(CACHE) - cache_insert: scrittura %s (%zu byte)... \n", f_name, dim_f);	
 
       //CONTROLLO PRELIMINARE
 	if (cache_capacity < dim_f){
@@ -181,7 +181,7 @@ int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id,
 
       //INSERIMENTO CON RIMPIAZZO -> gestire puntatore del file rimpiazzato
       if (used_mem+dim_f > cache_capacity || files_in_cache+1 > max_storage_file){
-		printf("cache_insert: rimpiazzo necessario\n");
+		printf("CACHE - cache_insert: rimpiazzo necessario\n");
 		if ((*expelled_file = replace_to_write(cache, f_name, f_data, dim_f, id
 		)) == NULL){
 			printf("cache_insert: scrittura di %s fallita\n", f_name);
@@ -191,12 +191,12 @@ int cache_insert(file** cache, char* f_name, byte* f_data, size_t dim_f, int id,
 	}
 
 	//INSERIMENTO SENZA RIMPIAZZO
-	printf("cahce_insert: enqueue (rimpiazzo non necessario)\n");
+	printf("CACHE - cahce_insert:	enqueue (rimpiazzo non necessario)\n");
 	if (cache_enqueue(cache, f_name, f_data, dim_f, id) == -1){
 		LOG_ERR(-1, "cache_writeFile: enqueue fallita");
 		return -1;
 	}
-	printf("DEBUG: scrittura %s eseguita\n", f_name);
+	printf("(CACHE) - cache_insert: scrittura %s eseguita\n", f_name);
       cache_capacity_update(dim_f, 1);
       return 0;
 }
