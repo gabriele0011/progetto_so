@@ -51,12 +51,11 @@ int writeFile(const char* f_name, char* dirname);
 int appendToFile(const char* f_name, void* buf, size_t size, const char* dirname);
 //lettura
 int readFile(const char* f_name, void** buf, size_t* size);
-int readNFiles(int n, const char* dirname ){return 0;};
+int readNFiles(int n, const char* dirname);
 //operazioni su file
 int lockFile(const char* f_name){return 0;};
 int unlockFile(const char* f_name){return 0;};
 int remvoveFile(const char* f_name){return 0;};
-
 
 
 static int is_opt( char* arg, char* opt)
@@ -78,23 +77,7 @@ static int is_directory(const char *path)
 }
 
 //scritture
-static void writefile_in_dir(char* pathname, size_t size_file, char* data)
-{
-	//passo 1: apertura directory dirname
-	DIR* d;
-	ec_null((d = opendir(arg_D)), "errore su opendir");
-	printf("dir '%s' aperta\n", arg_D);
 
-	//crea nuovo file in directory e scrivi
-	FILE* ifp;
-	ifp = fopen(pathname, "wr");
-	if (fwrite( data, sizeof(char), size_file, ifp) == -1){
-		LOG_ERR(-1, "client.writefile_in_dir: scrittura fallita");
-		exit(EXIT_FAILURE);
-	}
-	fclose(ifp);
-	ec_meno1(closedir(d), "errore su closedir");
-}
 static void case_W (char* arg_W)
 {
 	//printf("\n\n"); //DEBUG
@@ -163,12 +146,14 @@ static void send_from_dir(const char* dirname, int* n)
 		//passo 4 caso 2: richiesta di scrittura
 		}else{
 			path_dir = path;
+			if(strcmp(entry->d_name, ".DS_Store") != 0){
 			//printf("(CLIENT) - case_w.send_from_dir: richieta di scrittura per %s (path_dir: %s)\n", entry->d_name, path_dir); //DEBUG
-			if (write_request(entry->d_name) == -1 && strcmp(entry->d_name, ".DS_Store") != 0){  // (!) togliere strcmp errore terminale macos
+			if (write_request(entry->d_name) == -1){  // (!) togliere strcmp errore terminale macos
 				LOG_ERR(-1, "errore write_request"); 
 				exit(EXIT_FAILURE); 
 			}
 			(*n)--;
+			}
 		}
 	}
 	//chiudere la directory
@@ -237,6 +222,28 @@ static int append_file(const char* f_name)
 }
 
 //read
+static void writefile_in_dir(char* pathname, size_t size_file, char* data)
+{
+	//passo 1: apertura directory dirname
+	DIR* d;
+	ec_null((d = opendir(arg_d)), "writefile_in_dir: errore su opendir");
+	printf("dir '%s' aperta\n", arg_d);
+
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "%s/%s", arg_d, pathname);
+	//printf("path: %s\n", path);
+
+	//crea nuovo file in directory e scrivi
+	FILE* ifp;
+	ifp = fopen(path, "wr");
+	if (fwrite( data, sizeof(char), size_file, ifp) == -1){
+		LOG_ERR(-1, "writefile_in_dir: scrittura fallita");
+		exit(EXIT_FAILURE);
+	}
+	printf("writefile_in_dir: scrittura di %s avvenuta in %s\n", pathname, arg_d);
+	fclose(ifp);
+	ec_meno1(closedir(d), "writefile_in_dir: errore su closedir");
+}
 static void case_r (char* arg_r)
 {
 
@@ -252,6 +259,7 @@ static void case_r (char* arg_r)
 		token = strtok_r(NULL, ",", &save);
 	}
 }
+
 
 //lock/unlock
 static void case_l(char* arg_l)
@@ -968,7 +976,16 @@ int readFile(const char* pathname, void** buf, size_t* size)
       // invio dati richiesta al server 
       printf("(CLIENT) - readFile: fino a qui tutto bene\n");
 
-      //LEN PATHNAME
+	//IDENTIFICAZIONE PROCESSO
+      int id = getpid();
+      //16 comunica: pid
+      *buffer = id;
+	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 6 fallita");
+      //19 riceve: conferma ricezione pid
+      ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 6 fallita");
+	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto atf_clean; }
+      
+	//LEN PATHNAME
 	//comunica: invia lunghezza pathname
 	int len_path = strlen(pathname);
 	*buffer = len_path;
@@ -1037,25 +1054,37 @@ int readFile(const char* pathname, void** buf, size_t* size)
 	
 }
 
-
+//READ N FILES
 int readNFiles(int n, const char* dirname )
 {
-
 	int* buffer;
 	ec_null( (buffer = malloc(sizeof(int))), "readNFiles: malloc fallita");
 	*buffer = 0;
+	char* data_file = NULL;
 
 	//SETTING RICHIESTA
-      //comunica al thread 4 (codifica readNFiles=5)
-	*buffer = 4;
+      //comunica al thread 5 (codifica readNFiles=5)
+	*buffer = 5;
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 1 fallita");
       //riceve: conferma accettazione richiesta openFile (1)
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 1 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida") goto rf_clean; }
+	if(*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida") goto rnf_clean; }
+	printf("(CLIENT) - readNFiles: setting richiesta OK\n");
 	
 
       // comunicazione stabilita OK
       // invio dati richiesta al server 
+
+	
+	//IDENTIFICAZIONE PROCESSO
+      int id = getpid();
+      //16 comunica: pid
+      *buffer = id;
+	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 5 fallita");
+      //19 riceve: conferma ricezione pid
+      ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 5 fallita");
+	if(*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
+	printf("(CLIENT) - readNFiles: identificazione processo  OK\n");
 
 
       //NUMERO DI FILE DA LEGGERE
@@ -1064,18 +1093,20 @@ int readNFiles(int n, const char* dirname )
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita");
       //riceve: conferma ricezione pathname
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 2 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rf_clean; }
+	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rnf_clean; }
+	printf("(CLIENT) - readNFiles: numero di file da leggere OK\n");
 
-	//manca ID processo
 
 	while(1) {
-			
+		printf("(CLIENT) - BUG HERE?\n");
 		//CONDIZIONE DI TERMINAZIONE
-		//riceve: condizioe di  terminazione
+		//riceve: condizione di  terminazione
 		ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 3 fallita");
 		if(*buffer != 1) break;
 		*buffer = 0;
 		ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita");
+		printf("(CLIENT) - readNFiles: condizione di terminazione OK\n");
+
 
 		//CONTROLLO LOCK FILE
 		//riceve: flag lock 
@@ -1084,6 +1115,8 @@ int readNFiles(int n, const char* dirname )
 		not_lock = *buffer;
 		*buffer = 0;
 		ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita");
+		printf("(CLIENT) - readNFile: controllo lock file OK\n");
+
 
 		if(not_lock){
 			
@@ -1096,11 +1129,10 @@ int readNFiles(int n, const char* dirname )
 			*buffer = 0;
 			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
 
-
 			//FILE NAME
 			//riceve:
-			char file_name[len_name+1];
-			file_name[len_name+1] = '\0';
+			char file_name[len_name];
+			file_name[len_name] = '\0';
 			ec_meno1(read(fd_sk, file_name, sizeof(char)*len_name), "readNFiles: read 3 fallita");
 			//comunica: conferma ricezione
 			*buffer = 0;
@@ -1110,40 +1142,35 @@ int readNFiles(int n, const char* dirname )
 			//riceve: dimensione
 			size_t dim_file;
 			ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 3 fallita");
-			dim_file = (size_t)*buffer; //cast implicito?
+			dim_file = (size_t)*buffer;  //cast implicito?
 			//comunica: conferma ricezione
 			*buffer = 0;
 			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
-
 	
-			//DATA FILE -> ANZICHE LEGGERE UN SOLO DATA[]
-			//SI CREA char** array_data con tanti char data interni
+			//DATA FILE 
+			
+			ec_null((data_file = calloc(sizeof(char), dim_file)), "readNFiles: calloc fallita");
 			//riceve: data
-			char* data = NULL;
-			ec_null((data = calloc(sizeof(char), (*size))), "readNFiles: calloc fallita");
-			ec_meno1(read(fd_sk, data, sizeof(char)*(*size)), "readNFiles: read 3 fallita");
-			//buf = &data;  //BUG CON ASSEGNAMENTO BUFFER
+			ec_meno1(read(fd_sk, data_file, sizeof(char)*dim_file), "readNFiles: read 3 fallita");
 			//comunica: conferma ricezione
 			*buffer = 0;
 			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
-	
-			if (arg_d != NULL){
-				writefile_in_dir(file_name, dim_file, data);
-			free(data);
+			
+			if (arg_d != NULL)
+				writefile_in_dir(file_name, dim_file, data_file);
+			
+			if(data_file) free(data_file);
 		}
 
 	}
 	
 	if(buffer) free(buffer);
-	if(data) free(data);
+	//if(data_file) free(data_file);
 	return 0;
 
-	rf_clean:
+	rnf_clean:
 	if(buffer) free(buffer);
-	if(data) free(data);
+	if(data_file) free(data_file);
 	return -1;
-	
-
-
-
 }
+
