@@ -1,14 +1,10 @@
-// nel caso di cache insert si devono controllare i duplicati
-// -> facciamo una ricerca preliminare pre inserimento per capire se il file è un duplicato
-// sarà una delle condizioni preliminari di inserimento 
-// -> fare le free sui nodi rimpiazzati dopo averli comunicati
+
+// MANCA:
+// lista dei file aperti lato client
 
 //cd /users/gabriele/desktop/progetto_sol/src
 
 #include "server_manager.h"
-//#define PIPE_MAX_LEN_MSG sizeof(int)
-//#define O_CREATE 1
-//#define O_LOCK 2
 typedef enum {O_CREATE=1, O_LOCK=2} flags;
 
 static int worker_openFile(int fd_c);
@@ -18,10 +14,10 @@ static int worker_readFile(int fd_c);
 static int worker_readNFiles(int fd_c);
 //arrivare qui entro oggi
 
-static int worker_closeFile(int x){return 0;}
-static int worker_lockFile(int x){return 0;}
+static int worker_lockFile(int x);
 static int worker_unlockFile(int x){return 0;}
 static int worker_removeFile(int x){return 0;}
+static int worker_closeFile(int x){return 0;}
 
 int read_config_file(char* f_name)
 {
@@ -117,7 +113,7 @@ void* start_func(void *arg)
 		}
 		op = *buf;
 		printf("\n");
-		printf("(SERVER) - start_func: elaborazione nuova richiesta di tipo %d\n",op); //DEBUG
+		printf("(SERVER) - start_func:		elaborazione nuova richiesta di tipo %d\n",op); //DEBUG
 		//printf("(SERVER) - start_func: fd_c= %d / op =%d / byte_read=%d\n", fd_c, op, N); //DEBUG
 		
 		//client disconnesso
@@ -550,6 +546,7 @@ static int worker_openFile(int fd_c)
 		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "openFile: write 9 fallita");
 		//DATA
 		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "openFile: write 10 fallita");
+		cache_removeFile(&cache, (*file_expelled)->f_name, id);
 	}
 
 	if(buf) free(buf);
@@ -688,6 +685,7 @@ static int worker_writeFile(int fd_c)
 		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "writeFile: write 9 fallita");
 		//DATA
 		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "openFile: write 10 fallita");
+		cache_removeFile(&cache, (*file_expelled)->f_name, id);
 	}
 
 	if(buf) free(buf);
@@ -819,6 +817,7 @@ static int worker_appendToFile(int fd_c)
 		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "appendToFile: write 9 fallita");
 		//DATA
 		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "openFile: write 10 fallita");
+		cache_removeFile(&cache, (*file_expelled)->f_name, id);
 	}
 
 	if(buffer) free(buffer);
@@ -1049,3 +1048,83 @@ static int worker_readNFiles(int fd_c)
 	if(buffer) free(buffer);
 	return -1;
 }
+
+
+
+
+//LOCK
+static int worker_lockFile(int fd_c)
+{
+	int* buffer;
+   	ec_null( (buffer = (int*)malloc(sizeof(int))), "lockFile: malloc fallita");
+	*buffer = 0;
+	int len;
+	char* pathname = NULL;
+	int ret_client;
+
+	//1 -> la prima read viene effettuata nella start_func
+
+	//SETTING RICHIESTA
+    	//(comunica): richiesta lockFile (cod.6) accettata
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");
+
+
+	// comunicazione stabilita OK
+	// acquisizione dati richiesta dal client:
+
+
+	//LEN PATHNAME
+	//(riceve): lunghezza del pathname
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "lockFile: read fallita");
+	len = *buffer;
+	//risponde: ricevuta
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");	//BUG HERE
+
+
+	//PATHNAME
+	//allocazione mem pathname
+	ec_null((pathname = calloc(sizeof(char), len+1)), "lockFile: calloc fallita");
+	pathname[len+1] = '\0';
+	//riceve: pathname
+	ec_meno1(read(fd_c, pathname, sizeof(char)*(len)), "lockFile: read fallita"); //inserisci controllo esito read
+	//10 (comunica): ricevuto
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");
+
+
+	//IDENTIFICAZIONE PROCESSO CLIENT
+	//17 (riceve): pid
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "lockFile: read fallita");
+	int id = *buffer;
+	//(comunica): recevuto
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");
+
+
+	//ELABORAZIONE RICHIESTA
+	ret_client = cache_lockFile(pathname, id);
+
+	
+	//ESITO
+	//(comunica): esito
+	*buffer = ret_client;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write 6 fallita");
+	//(riceve): conferma ricezione
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "lockFile: read 3 fallita");
+	if (*buffer != 0){ LOG_ERR(-1, "lockFile: read 3 non valida"); goto rf_clean; }
+
+
+
+
+
+
+}
+
+//UNLOCK
+
+
+//REMOVE FILE
+
+

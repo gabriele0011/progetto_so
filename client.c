@@ -983,7 +983,7 @@ int readFile(const char* pathname, void** buf, size_t* size)
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 6 fallita");
       //19 riceve: conferma ricezione pid
       ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 6 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto atf_clean; }
+	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rf_clean; }
       
 	//LEN PATHNAME
 	//comunica: invia lunghezza pathname
