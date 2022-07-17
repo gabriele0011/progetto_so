@@ -14,9 +14,9 @@ static int worker_readFile(int fd_c);
 static int worker_readNFiles(int fd_c);
 //arrivare qui entro oggi
 
-static int worker_lockFile(int x);
-static int worker_unlockFile(int x){return 0;}
-static int worker_removeFile(int x){return 0;}
+static int worker_lockFile(int fd_c);
+static int worker_unlockFile(int fd_c);
+static int worker_removeFile(int fd_c);
 static int worker_closeFile(int x){return 0;}
 
 int read_config_file(char* f_name)
@@ -1049,9 +1049,6 @@ static int worker_readNFiles(int fd_c)
 	return -1;
 }
 
-
-
-
 //LOCK
 static int worker_lockFile(int fd_c)
 {
@@ -1080,7 +1077,7 @@ static int worker_lockFile(int fd_c)
 	len = *buffer;
 	//risponde: ricevuta
 	*buffer = 0;
-	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");	//BUG HERE
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");
 
 
 	//PATHNAME
@@ -1088,7 +1085,7 @@ static int worker_lockFile(int fd_c)
 	ec_null((pathname = calloc(sizeof(char), len+1)), "lockFile: calloc fallita");
 	pathname[len+1] = '\0';
 	//riceve: pathname
-	ec_meno1(read(fd_c, pathname, sizeof(char)*(len)), "lockFile: read fallita"); //inserisci controllo esito read
+	ec_meno1(read(fd_c, pathname, sizeof(char)*(len)), "lockFile: read fallita"); 
 	//10 (comunica): ricevuto
 	*buffer = 0;
 	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita");
@@ -1104,27 +1101,160 @@ static int worker_lockFile(int fd_c)
 
 
 	//ELABORAZIONE RICHIESTA
-	ret_client = cache_lockFile(pathname, id);
+	ret_client = cache_lockFile(cache, pathname, id);
 
-	
 	//ESITO
 	//(comunica): esito
 	*buffer = ret_client;
 	ec_meno1(write(fd_c, buffer, sizeof(int)), "lockFile: write 6 fallita");
 	//(riceve): conferma ricezione
 	ec_meno1(read(fd_c, buffer, sizeof(int)), "lockFile: read 3 fallita");
-	if (*buffer != 0){ LOG_ERR(-1, "lockFile: read 3 non valida"); goto rf_clean; }
+	if (*buffer != 0){ LOG_ERR(-1, "lockFile: read 3 non valida"); goto lf_clean; }
 
-
-
-
-
-
+	if(buffer) free(buffer);
+	return 0;
+	
+	lf_clean:
+	if(buffer) free(buffer);
+	return -1;
 }
 
 //UNLOCK
+static int worker_unlockFile(int fd_c)
+{
+	int* buffer;
+   	ec_null( (buffer = (int*)malloc(sizeof(int))), "unlockFile: malloc fallita");
+	*buffer = 0;
+	int len;
+	char* pathname = NULL;
+	int ret_client;
 
+	//1 -> la prima read viene effettuata nella start_func
+
+	//SETTING RICHIESTA
+    	//(comunica): richiesta lockFile (cod.6) accettata
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita");
+
+
+	// comunicazione stabilita OK
+	// acquisizione dati richiesta dal client:
+
+
+	//LEN PATHNAME
+	//(riceve): lunghezza del pathname
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "unlockFile: read fallita");
+	len = *buffer;
+	//risponde: ricevuta
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita");
+
+
+	//PATHNAME
+	//allocazione mem pathname
+	ec_null((pathname = calloc(sizeof(char), len+1)), "unlockFile: calloc fallita");
+	pathname[len+1] = '\0';
+	//riceve: pathname
+	ec_meno1(read(fd_c, pathname, sizeof(char)*(len)), "unlockFile: read fallita"); 
+	//10 (comunica): ricevuto
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita");
+
+
+	//IDENTIFICAZIONE PROCESSO CLIENT
+	//17 (riceve): pid
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "unlockFile: read fallita");
+	int id = *buffer;
+	//(comunica): recevuto
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita");
+
+
+	//ELABORAZIONE RICHIESTA
+	ret_client = cache_unlockFile(cache, pathname, id);
+
+	//ESITO
+	//(comunica): esito
+	*buffer = ret_client;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "unlockFile: write 6 fallita");
+	//(riceve): conferma ricezione
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "unlockFile: read 3 fallita");
+	if (*buffer != 0){ LOG_ERR(-1, "unlockFile: read 3 non valida"); goto uf_clean; }
+
+	if(buffer) free(buffer);
+	return 0;
+
+	uf_clean:
+	if(buffer) free(buffer);
+	return -1;
+}
 
 //REMOVE FILE
+static int worker_removeFile(int fd_c)
+{
+	int* buffer;
+   	ec_null( (buffer = (int*)malloc(sizeof(int))), "removeFile: malloc fallita");
+	*buffer = 0;
+	int len;
+	char* pathname = NULL;
+	int ret_client;
+
+	//1 -> la prima read viene effettuata nella start_func
+
+	//SETTING RICHIESTA
+    	//(comunica): richiesta removeFile (cod.x) accettata
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "removeFile: write fallita");
 
 
+	// comunicazione stabilita OK
+	// acquisizione dati richiesta dal client:
+
+
+	//LEN PATHNAME
+	//(riceve): lunghezza del pathname
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "removeFile: read fallita");
+	len = *buffer;
+	//risponde: ricevuta
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "removeFile: write fallita");	
+
+
+	//PATHNAME
+	//allocazione mem pathname
+	ec_null((pathname = calloc(sizeof(char), len+1)), "removeFile: calloc fallita");
+	pathname[len+1] = '\0';
+	//riceve: pathname
+	ec_meno1(read(fd_c, pathname, sizeof(char)*(len)), "removeFile: read fallita");
+	//10 (comunica): ricevuto
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "removeFile: write fallita");
+
+
+	//IDENTIFICAZIONE PROCESSO CLIENT
+	//17 (riceve): pid
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "removeFile: read fallita");
+	int id = *buffer;
+	//(comunica): recevuto
+	*buffer = 0;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "removeFile: write fallita");
+
+
+	//ELABORAZIONE RICHIESTA
+	ret_client = cache_removeFile(&cache, pathname, id);
+
+	//ESITO
+	//(comunica): esito
+	*buffer = ret_client;
+	ec_meno1(write(fd_c, buffer, sizeof(int)), "removeFile: write 6 fallita");
+	//(riceve): conferma ricezione
+	ec_meno1(read(fd_c, buffer, sizeof(int)), "removeFile: read 3 fallita");
+	if (*buffer != 0){ LOG_ERR(-1, "removeFile: read 3 non valida"); goto rf_clean; }
+
+	if(buffer) free(buffer);
+	return 0;
+
+	rf_clean:
+	if(buffer) free(buffer);
+	return -1;
+}
