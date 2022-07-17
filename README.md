@@ -1,1 +1,1 @@
-# progetto_so
+progetto di sistemi operativi
