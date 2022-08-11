@@ -1,104 +1,47 @@
-
 /*
 -> implementare lista dei file aperti e procedura di chiusura quando il client si disconnette
 -> timespec da implementare nelle richieste
 */
 
-//#include "client.h"
-#include "error_ctrl.h"
-#include "aux_function.h"
-#include "list.h"
-typedef unsigned char byte;
-enum { NS_PER_SECOND = 1000000000 };
-typedef enum { O_CREATE = 1, O_LOCK = 2 }flags;
-#define LOCK_TIMER 300
-
-//variabili globali
-static char* arg_D = NULL;		//dirname in cui scrivere i file rimossi dal server
-static char* arg_d = NULL;		//dirname in cui scrivere i file letti dal server
-static byte flag_p = 0;			//abilita stampe sullo std output per ogni operazione
-static byte flag_h = 0;			//-h attivo 
-static unsigned sleep_time = 0; 	
-static int fd_sk; // = -1;
-static char *socket_name = NULL;	
-static char* path_dir = NULL;		//in caso di scritture (-w dirname), contiene il percorso del file ricavato in send_from_directory
-node* open_files_list = NULL;
-
-//prototipi client
-static void parser(int dim, char** array);
-static void help_message();
-static void set_socket(const char* socket_name);
-static void send_from_dir(const char* dirname, int* n);
-static int append_request(const char* s);
-static int write_request(char* arg_W);
-static void case_write_w(char* arg_w);
-static void case_write_W (char* arg_W);
-static void lock_request(char* arg_l);
-static void unlock_request(char* arg_u);
-static void remove_request(char* arg_c);
-static void read_request(char* arg_r);
-
-//prototipi API client
-int openConnection(const char* sockname, int msec, const struct timespec abstime);
-int closeConnection(const char* sockname);
-int openFile(const char* sockaname, int flags);
-int writeFile(const char* pathname, char* dirname);
-int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname);
-int readFile(const char* pathname, void** buf, size_t* size);
-int readNFiles(int n, const char* dirname);
-int lockFile(const char* pathname);
-int unlockFile(const char* pathname);
-int removeFile(const char* pathname);
-int closeFile(const char* pathname);
-
+#include "client.h"
+int status_conn = 0;
 
 //scritture
 static void case_write_W (char* arg_W)
 {
-	//printf("\n\n"); //DEBUG
-	//printf("(CLIENT) - case_write_write_W\n"); //DEBUG
+	//printf("(CLIENT) - case_write_W\n"); //DEBUG
 	char* save = NULL;
 	char* token = strtok_r(arg_W, ",", &save);
 	while (token){
-		printf("(CLIENT) - case_write_write_W:	richiesta di scrittura del file %s\n", token); //DEBUG
-		if(write_request(token) == -1){
-			LOG_ERR(errno, "scrittura fallita\n");
-		}
+		printf("(CLIENT) - case_write_W:	richiesta di scrittura del file %s\n", token); //DEBUG
+		write_request(token);
 		token = strtok_r(NULL, ",", &save);
-	}
-	if(closeConnection(socket_name) == -1){
-		LOG_ERR(errno, "case_write_write_W: closeConnection fallita\n");
-	}else{
-		printf("(CLIENT) - case_write_write_W: connessione con server chiusa\n"); //DEBUG
 	}
 }
 static void case_write_w(char* arg_w)
 {
 		char* dirname; //in seguito qui salvo la dir estratta da arg_w
-		//verifica arg opzionale n>0 || n=0 || n = NULL
+		//verifica arg. opzionale (n>0 || n=0 || n = NULL)
 		char* n = NULL;
 		int x;			
-		//strtok_r restituisce ind. primo token appena dopo il primo delimitatore
-		strtok_r(arg_w, ",", &n);
-		//se n non è specificata -> x = -1
+		
+		strtok_r(arg_w, ",", &n); //restituisce ind. primo token dopo il primo delimitatore
 		if (n == NULL){
 			x = -1;
-			dirname = NULL;
 		}else{
-			dirname = strtok(arg_w, ",");
-			//controllo che sia un intero e che sia positivo
-			if ((x = is_number(n)) == -1){ LOG_ERR(EINVAL, "case_write_w: arg. -w non intero\n"); return; } //in caso di ERRORE?
-			if (x < 0){ LOG_ERR(EINVAL, "arg -w optzionale non valido"); return; }			
+			//controllo che sia un intero positivo
+			if ( (x = is_number(n)) == -1 || x < 0){ LOG_ERR(EINVAL, "case_write_w: arg. -w non valido\n"); return; }	
 			//se uguale a zero come non fosse presente -> x = -1
 			if (x == 0) x = -1;
 		}
+		dirname = strtok(arg_w, ",");
 		send_from_dir(dirname, &x);
 }
 static void send_from_dir(const char* dirname, int* n)
 {
 	//passo 1: apertura directory dirname
 	DIR* d;
-	ec_null((d = opendir(dirname)), "errore su opendir");
+	if ((d = opendir(dirname)) == NULL){ LOG_ERR(errno, "opendir in send_from_dir"); return; }
 	printf("dir '%s' aperta\n", dirname);
 
 	//passo 2: lettura della directory
@@ -107,9 +50,9 @@ static void send_from_dir(const char* dirname, int* n)
 		//passo 3 : aggiornamento path
 		char path[PATH_MAX];
 		snprintf(path, sizeof(path), "%s/%s", dirname, entry->d_name);
-		//passo 4 caso 1: controlla che se si tratta di una dir
+		//passo 4 caso 1: controlla che se si tratti di una dir
 		if (is_directory(path)){	
-			//controlla che non si tratti della dir . o ..
+			//controlla che non si tratti della dir . oppure ..
 			if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0)
 				//visita ricorsiva su nuova directory
 				send_from_dir(path, n);
@@ -118,36 +61,32 @@ static void send_from_dir(const char* dirname, int* n)
 			path_dir = path;
 			if(strcmp(entry->d_name, ".DS_Store") != 0){ //TERMINALE MACOS
 			//printf("(CLIENT) - case_write_w.send_from_dir: richieta di scrittura per %s (path_dir: %s)\n", entry->d_name, path_dir); //DEBUG
-			if (write_request(entry->d_name) == -1){  // (!) togliere strcmp errore terminale macos
-				LOG_ERR(errno, "errore write_request");
-			}
+			write_request(entry->d_name);
 			(*n)--;
 			}//TERMINALE MACOS
 		}
 	}
 	//chiudere la directory
-	ec_meno1(closedir(d), "closedir");
-	//return 0;
+	if (closedir(d) == -1) LOG_ERR(errno, "closedir in send_from_dir");
 }
 static int write_request(char* f_name)
 {	
 	// (!) gestione accurata degli errori
 	printf("\n\n"); //DEBUG
-	//writeFile
 	printf("(CLIENT) - write_request\n"); //DEBUG
-	if (openFile(f_name, (O_CREATE|O_LOCK)) != -1 ){
-            printf("(CLIENT) - writeFile in corso... \n"); //DEBUG
-		writeFile(f_name, arg_d);
+	//openFile + writeFile
+	if (openFile(f_name, (O_CREATE|O_LOCK)) == 0){
+		if (writeFile(f_name, arg_d) == -1){ LOG_ERR(errno, "writeFile"); }
 		if(errno == ENOENT) removeFile(f_name);
 		else insert_node(&open_files_list, f_name);
 	}else{
-		//appendToFile
-		if (openFile(f_name, 0) != -1 ){
-			printf("(CLIENT) - appendToFile in corso...\n"); //DEBUG
+		//openFile + appendToFile
+		if (errno == ENOENT && openFile(f_name, 0) != -1 ){
+			//printf("(CLIENT) - appendToFile in corso...\n"); //DEBUG
 	      	append_request(f_name);
 			insert_node(&open_files_list, f_name);
 		}else{
-			printf("(CLIENT) - write_request: fallita\n"); //DEBUG
+			//printf("(CLIENT) - write_request: openFile fallita\n"); //DEBUG
 			return -1;
 		}
 	}
@@ -158,13 +97,13 @@ static int append_request(const char* f_name)
 {
 	//apertura del file
 	int fd;
-	if(path_dir != NULL){ ec_meno1((fd = open(path_dir, O_RDONLY)), "open in append_request"); }
-	else{ ec_meno1((fd = open(f_name, O_RDONLY)), "open in append_request"); }
+	if (path_dir != NULL){ if ((fd = open(path_dir, O_RDONLY)) == -1) LOG_ERR(errno, "open in append_request"); goto ar_cleanup; }
+	else{ if ((fd = open(f_name, O_RDONLY)) == -1) LOG_ERR(errno, "open in append_request"); goto ar_cleanup; }
 
 	//stat per ricavare dimensione file
 	struct stat path_stat;
-	if(path_dir != NULL){ ec_meno1(lstat(path_dir, &path_stat), "append_request"); }
-	else{ ec_meno1(lstat(f_name, &path_stat), "append_request"); }
+	if (path_dir != NULL){ if (lstat(path_dir, &path_stat) == -1) LOG_ERR(errno, "lstat in append_request"); goto ar_cleanup; }
+	else{ if (lstat(f_name, &path_stat) == -1) LOG_ERR(errno, "lstat in append_request"); goto ar_cleanup; }
 
     	//allocazione buf[size]
     	size_t file_size = path_stat.st_size;
@@ -172,23 +111,30 @@ static int append_request(const char* f_name)
  	ec_null((buf = calloc(file_size, sizeof(char))) , "append_request");
 
  	//lettura file + scrittura del buf
- 	ec_meno1(read(fd, buf, file_size), "append_request");
- 	ec_meno1(close(fd), "append_request");
+	if (read(fd, buf, file_size) == -1){ LOG_ERR(errno, "read in append_request"); goto ar_cleanup; }
+ 	if (close(fd) == -1){ LOG_ERR(errno, "close in append_request"); goto ar_cleanup; }
 
- 	//appendToFile per scrittura f_name atomica
- 	if( appendToFile(f_name, buf, file_size, arg_d) == -1) LOG_ERR(errno, "appendToFile");
     	path_dir = NULL;
-
+ 	//appendToFile per scrittura f_name atomica
+ 	if (appendToFile(f_name, buf, file_size, arg_d) == -1){
+		LOG_ERR(errno, "writeFile");
+		goto ar_cleanup;
+	}
  	//cleanup -> con goto? ERRORE?
- 	if(!buf) free(buf);
+ 	if (!buf) free(buf);
  	return 0;
+
+	ar_cleanup:
+	if (!buf) free(buf);
+ 	return -1;
 }
 
+//scrittura di un file in una directory specificata in pathname
 static void writefile_in_dir(char* pathname, size_t size_file, char* data)
 {
 	//passo 1: apertura directory dirname
 	DIR* d;
-	ec_null((d = opendir(arg_d)), "writefile_in_dir: errore su opendir");
+	if ((d = opendir(arg_d)) == NULL){ LOG_ERR(errno, "opendir in writefile_in_dir"); return; }
 	printf("dir '%s' aperta\n", arg_d);
 
 	char path[PATH_MAX];
@@ -197,15 +143,16 @@ static void writefile_in_dir(char* pathname, size_t size_file, char* data)
 
 	//crea nuovo file in directory e scrivi
 	FILE* ifp;
-	ifp = fopen(path, "wr");
+	if ( (ifp = fopen(path, "wr")) == NULL){ LOG_ERR(errno, "fopen in writefile_in_dir"); return; }
 	if (fwrite( data, sizeof(char), size_file, ifp) == -1){
-		LOG_ERR(-1, "writefile_in_dir: scrittura fallita");
-		exit(EXIT_FAILURE);
+		LOG_ERR(errno, "writefile_in_dir: scrittura fallita");
+		return;
 	}
-	printf("writefile_in_dir: scrittura di %s avvenuta in %s\n", pathname, arg_d);
-	fclose(ifp);
-	ec_meno1(closedir(d), "writefile_in_dir: errore su closedir");
+	if (fclose(ifp) == -1){ LOG_ERR(errno, "fclose in writefile_in_dir"); return; }
+	if (closedir(d) == -1){ LOG_ERR(errno, "closedir in writefile_in_dir"); return; }
+	printf("writefile_in_dir: scrittura di %s avvenuta in %s\n", pathname, arg_d); //DEBUG
 }
+
 //read
 static void read_request (char* arg_r)
 {
@@ -250,9 +197,8 @@ static void unlock_request(char* arg_u)
 	char* save = NULL;
 	char* token = strtok_r(arg_u, ",", &save);
 	while (token){
-		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
 		printf("richiesta di unlock su: %s\n", token);
-		//chiamata;
+		if ( unlockFile(token) == -1) LOG_ERR(errno, "unlockFile");
 		token = strtok_r(NULL, ",", &save);
 	}
 }
@@ -266,7 +212,7 @@ static void remove_request(char* arg_c)
 		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
 		printf("richiesta di cancellazione su: %s\n", token);
 		if(openFile(token, 0) != -1){
-			if (removeFile(token) == -1){ LOG_ERR(errno, "removeFile:");}
+			if (removeFile(token) == -1){ LOG_ERR(errno, "removeFile");}
 			else{ insert_node(&open_files_list, token);}
 		}else{
 			LOG_ERR(errno, "openFile:");
@@ -283,7 +229,7 @@ void file_closing(node* open_files_list)
 	}
 }
 //connessione
-static void set_socket(const char* socket_name)
+static int set_socket(const char* socket_name)
 {
 	//necessario effettuare un controllo sulla stringa socket_name?
 	//deve avere una dimensione specifica?
@@ -295,19 +241,21 @@ static void set_socket(const char* socket_name)
 
 	//open connection
    	if(openConnection(socket_name, rec_time, abstime) == -1){
-    		LOG_ERR(errno, "set_socket: tentativo di connessione non riuscito");
-    		exit(EXIT_FAILURE);
+    		LOG_ERR(errno, "openConnection:");
+		return -1;
     	}
+	status_conn = 1;
+	return 0;
 }
 //help
 static void help_message()
 {
 	int fd;
-	ec_meno1((fd = open("help.txt", O_RDONLY)), "errore f. open in help_message");
+	if ((fd = open("help.txt", O_RDONLY)) == -1){ LOG_ERR(errno, "open in help_message"); return; }
 	
 	//struttura per acquisire informazioni sul file
 	struct stat path_stat;
-	ec_meno1(lstat("help.txt", &path_stat), "errore stat");
+	if (lstat("help.txt", &path_stat) == -1){ LOG_ERR(errno, "lstat in help_message"); return; }
 
     	//allocazione buf[size] per la dimensione del file in byte
     	size_t file_size = path_stat.st_size;
@@ -315,21 +263,23 @@ static void help_message()
  	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_request");
 	
  	//lettura file + scrittura del buf
- 	ec_meno1(read(fd, buf, file_size), "read");
+ 	if (read(fd, buf, file_size) == -1){ LOG_ERR(errno, "read in help_message"); goto hm_clean; }
  	
 	//stampa buf
- 	for(int i = 0; i < file_size; i++) printf("%c", buf[i]);
-	//DEBUG: carattere di terminazione presente nel file txt?
+ 	for (int i = 0; i < file_size; i++) printf("%c", buf[i]);
 
- 	ec_meno1(close(fd), "errore close in append_request");
- 	if(!buf) free(buf);
+	if (close(fd) == -1){ LOG_ERR(errno, "close in help_message"); goto hm_clean; }
+
+	if (!buf) free(buf);
+	hm_clean:
+	if (!buf) free(buf);
 }
 //parser
 static void parser(int dim, char** array)
 {
-	byte flag_wW = 0;			//flag di controllo scritture (extra)
-	byte flag_rR = 0;			//flag controllo letture (extra)
-	
+	byte flag_wW = 0;			//flags controllo dipendenze
+	byte flag_rR = 0;			
+	char* socket_name = NULL;	
 	//ciclo preliminare per controllare se presente -h e terminare immediatamente 
 	int i = 0;
 	while (++i < dim){
@@ -349,10 +299,14 @@ static void parser(int dim, char** array)
 			if (is_argument(array[i+1])){ 
 				socket_name = array[++i];
 				set_socket(socket_name);
-			}else{ 
+			}else{
 				LOG_ERR(EINVAL, "client: argomento -f mancante");
-				goto c_clean; 
+				goto c_clean;
 			}
+		}
+		if(!status_conn){
+			LOG_ERR(ECONNABORTED, "connessione non attiva, impossibile effettuare richieste al server");
+			goto c_clean;
 		}
 		//CASO -t
 		if (is_opt(array[i], "-t")) {
@@ -463,11 +417,20 @@ static void parser(int dim, char** array)
 			usleep(sleep_time);
 		}
 	}
+	
+	file_closing(open_files_list);
+	dealloc_list(&open_files_list);
+	//chiusura connessione
 	closeConnection(socket_name);
 	return;
 	
 	c_clean:
-	closeConnection(socket_name);
+	if(status_conn){ 
+		file_closing(open_files_list);
+		dealloc_list(&open_files_list);
+		//chiusura connessione
+		closeConnection(socket_name);
+	}
 	return;
 }
 
@@ -481,40 +444,17 @@ int main(int argc, char* argv[]){
 	}
 	//parser
 	parser(argc, argv);
-	
-	//routine di chiusura dei file aperti
-	file_closing(open_files_list);
-	dealloc_list(&open_files_list);
 	return 0;
 }
 
 
-
-
 //////////////////////////////////////  API CLIENT  //////////////////////////////////////
-//funzioni aus.
-void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td)
-{
-    td->tv_nsec = t2.tv_nsec - t1.tv_nsec;
-    td->tv_sec  = t2.tv_sec - t1.tv_sec;
-    if (td->tv_sec > 0 && td->tv_nsec < 0)
-    {
-        td->tv_nsec += NS_PER_SECOND;
-        td->tv_sec--;
-    }
-    else if (td->tv_sec < 0 && td->tv_nsec > 0)
-    {
-        td->tv_nsec -= NS_PER_SECOND;
-        td->tv_sec++;
-    }
-}
-
 //OPEN CONNECTION
 int openConnection(const char* sockname, int msec, const struct timespec abstime)
 {
-	printf("\n\n"); //DEBUG
-	//controllo validità socket_name
-	if(socket_name == NULL) errno=ENOTSOCK; return -1;
+	//printf("\n\n"); //DEBUG
+	//controllo validità sockname
+	if(sockname == NULL){ errno=ENOTSOCK; return -1; }
 
 	//timer setting
 	msec = msec/1000; //conversione da millisecondi a microsecondi per la usleep
@@ -523,11 +463,12 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 
        //socket setting
       struct sockaddr_un sa;
-	strncpy(sa.sun_path, sockname, strlen(socket_name));
+	size_t len_sockname =  strlen(sockname);
+	strncpy(sa.sun_path, sockname, len_sockname);
+	sa.sun_path[len_sockname] = '\0';
 	sa.sun_family = AF_UNIX;
     
 	if( (fd_sk = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) return -1;
-
 
 	//ciclo di connessione
       while(connect(fd_sk, (struct sockaddr*)&sa, sizeof(sa)) == -1){
@@ -540,10 +481,11 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 			sub_timespec(time1, time2, &delta);
 			//controllo che non si sia superato il tempo assoluto dal primo tentativo di connessione
 			if( (delta.tv_nsec >= abstime.tv_nsec && delta.tv_sec >= abstime.tv_sec) || delta.tv_sec >= abstime.tv_sec){
-				LOG_ERR(ETIME, "openConnection");
+				//LOG_ERR(ETIME, "openConnection");
 				return -1;
 			}
-       	}else{ 
+       	}else{
+			errno = ECONNABORTED;
 			return -1;
 		}
       }
@@ -555,25 +497,13 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 int closeConnection(const char* sockname) 
 {
 
-	if(!sockname) {
-		errno=EINVAL; 
+	if (!sockname){
+		errno=EINVAL;
 	}
-	/*
-    	errno=0;
-    	if (strcmp(sockname, fd_sk) != 0) {     
-      	errno=EINVAL;       			
-    	}
-	*/
     	if (close(fd_sk) == -1 ){
 		LOG_ERR(errno, "client: close fallita");
 		return -1;  
-	}     			
-	/*
-   	if(fd_sk) {
-		free(fd_sk); 
-		fd_sk = NULL;
 	}
-*/
     	return 0;
 }
 
@@ -634,7 +564,6 @@ int openFile(const char* pathname, int flag)
       ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 5 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida"); goto of_clean; }
 
-	printf("op_data_receive: %d / %s / flags / %d\n", len, pathname, id); //DEBUG
 	//dati inviati al server
 	
 	//RICEZIONE ESITO OPENFILE
@@ -687,7 +616,7 @@ int openFile(const char* pathname, int flag)
 int writeFile(const char* pathname, char* dirname)
 {
 	printf("(CLIENT) - writeFile: su: %s\n", pathname);
-	//definizioni
+	//DEF
 	int* buffer;
 	ec_null( (buffer = malloc(sizeof(int))), "openFile: malloc fallita");
 	*buffer = 0;
@@ -716,55 +645,54 @@ int writeFile(const char* pathname, char* dirname)
  	ec_meno1(read(fd, data_file, file_size), "writeFile: read fallita");
  	ec_meno1(close(fd), "writeFile: close fallita");
 	path_dir = NULL;
+	
 	///////////////////////////////////////////////////////////////////////////////
 
-
-
 	//SETTING RICHIESTA
-      //0 comunica al thread 2 (codifica writeFile=2)
+      //comunica: "2" al thread  (codifica writeFile=2)
 	*buffer = 2;
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 1 fallita");
-      //3 riceve: conferma accettazione richiesta openFile (1)
+      //riceve: conferma accettazione richiesta
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 1 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida") goto wf_clean; }
-	printf("writeFile: setting richiesta OK\n");
+	//f("writeFile: setting richiesta OK\n"); //DEBUG
 
       // comunicazione stabilita OK
       // invio dati richiesta al server 
       
 
       //LEN PATHNAME
-	//4 comunica: invia lunghezza pathname
+	//comunica: lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 2 fallita");
-      //7 riceve: conferma ricezione pathname
+      //riceve: conferma ricezione pathname
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
-	printf("writeFile: len pathname OK\n");
+	//printf("writeFile: len pathname OK\n"); //DEBUG
 
 	//PATHANAME
-	//8 comunica: pathname
+	//comunica: pathname
 	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "writeFile: write 3 fallita");
-	//11 riceve: conferma ricezione pathname
+	//riceve: conferma ricezione pathname
       ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 3 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
-	printf("writeFile: pathname OK\n");
+	//printf("writeFile: pathname OK\n"); //DEBUG
 
 	//DIMENSIONE DEL FILE
 	*buffer = file_size;
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 2 fallita");
-      //7 riceve: conferma ricezione pathname
+      //riceve: conferma ricezione pathname
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
-	printf("writeFile: file_size OK\n");
+	//printf("writeFile: file_size OK\n"); //DEBUG
 
 	//DATA FILE
 	ec_meno1(write(fd_sk, data_file, sizeof(char)*file_size), "writeFile: write 2 fallita");
-      //7 riceve: conferma ricezione pathname
+      //riceve: conferma ricezione pathname
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
-	printf("writeFile: data file OK\n");
+	//printf("writeFile: data file OK\n"); //DEBUG
 
 
       //IDENTIFICAZIONE PROCESSO
@@ -775,7 +703,7 @@ int writeFile(const char* pathname, char* dirname)
       //riceve: conferma ricezione pid
       ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 5 fallita");
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
-	printf("writeFile: pid OK\n");
+	//printf("writeFile: pid OK\n"); //DEBUG
 
 	
 	
@@ -785,7 +713,7 @@ int writeFile(const char* pathname, char* dirname)
 	
 
 	//RICEZIONE ESITO WRITE FILE 
-	//21 (riceve): esito openFile
+	//riceve: esito openFile
 	int ret;
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 6 fallita");
 	ret = *buffer;
@@ -1401,10 +1329,10 @@ int closeFile(const char* pathname)
 	*buffer = 0;
 
 	//SETTING RICHIESTA
-      //comunica al thread 1 (codifica closeFile=9)
+      //comunica: 9 al thread (codifica closeFile=9)
 	*buffer = 9;
 	ec_meno1(write(fd_sk, buffer, sizeof(int)), "closeFile: write 1 fallita");
-      //riceve: conferma accettazione richiesta openFile (1)
+      //riceve: conferma accettazione richiesta 
 	ec_meno1(read(fd_sk, buffer, sizeof(int)), "closeFile: read 1 fallita");
 	if(*buffer != 0){ LOG_ERR(-1, "closeFile: read non valida") goto cf_clean; }
 
