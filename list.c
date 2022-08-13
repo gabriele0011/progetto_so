@@ -1,16 +1,16 @@
-//pila LIFO per memorizzare i file aperti nel client
+//pila LIFO per memorizzare i node aperti nel client
 #include "list.h"
 
-void insert_node(node** list, char* f_name)
+void insert_node(node** list, char* string)
 {
       //allocazione
       node* new = NULL;
       new = (node*)malloc(sizeof(node)); //inserire controllo malloc
       //setting
-      size_t len_f_name = strlen(f_name);
-      new->file_name = (char*)calloc(sizeof(char), len_f_name+1);
-      new->file_name[len_f_name+1] = '\0';
-      strncpy(new->file_name, f_name, len_f_name);
+      size_t len_string = strlen(string);
+      new->str = (char*)calloc(sizeof(char), len_string+1);
+      new->str[len_string+1] = '\0';
+      strncpy(new->str, string, len_string);
 
       if (*list == NULL) new->next = NULL;
       else new->next = *list;
@@ -34,5 +34,32 @@ void dealloc_list(node** list)
             temp = *list;
             *list = (*list)->next;
             free(temp);
+      }
+}
+
+//aggiungere procedure di ricerca e rimozione di un nodo
+
+node* search_node(node* list, char* string)
+{
+      while (list != NULL){
+            if (strcmp(list->str, string) == 0) return list;
+            list = list->next;
+      }
+      return NULL;
+}
+
+void remove_node(node** list, char* string)
+{
+      if(*list == NULL) return;
+      node* temp = *list;
+      node* prev = *list;
+      while(temp != NULL){
+            if (strcmp(temp->str, string) == 0){
+                  prev->next = temp->next;
+                  free(temp);
+                  break;
+            }
+            prev = temp;
+            temp = temp->next;
       }
 }

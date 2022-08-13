@@ -1,9 +1,15 @@
 //pila LIFO per memorizzare i file aperti nel client
-typedef struct Node{
-      char* file_name;
-      struct Node* next;
+#include "header_file.h"
+
+typedef struct _node
+{
+      char* str;
+      struct _node* next;
 }node;
 
-void insert_node(node** list, char* f_name);
+void insert_node(node** list, char* string);
 node* extract_node(node** list);
 void dealloc_list(node** list);
+//node* search_node(node* list, char* string);
+//void remove_node(node** list, char* string);
+

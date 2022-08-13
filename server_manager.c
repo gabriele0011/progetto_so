@@ -542,7 +542,7 @@ static int worker_openFile(int fd_c)
 		ec_meno1(write(fd_c, &((*file_expelled)->f_size), sizeof(size_t)), "openFile: write 9 fallita");
 		//DATA
 		ec_meno1(write(fd_c, (*file_expelled)->f_data, sizeof(char)*(*file_expelled)->f_size), "openFile: write 10 fallita");
-		cache_removeFile(&cache, (*file_expelled)->f_name, id);
+		cache_removeFile(&cache, (*file_expelled)->f_name, id); //?? andrebbe deallocato -> è gia stato staccato dalla lista
 	}
 
 	if(buf) free(buf);
@@ -633,28 +633,21 @@ static int worker_writeFile(int fd_c)
 	//scrittura del file
 	//printf("ret_client=%d - path:%s - size:%d - id:%d\n", ret_client, pathname, file_size, id); //DEUBG
 	ret_client = cache_appendToFile(&cache, pathname, data, file_size, id, file_expelled);
-	/*
+	
+
 	//se la scrittura fallisce, va eliminato il file vuoto creato nella openFile
 	if(ret_client == -1){
 		if(cache_removeFile(&cache, pathname, id) == -1){
 			LOG_ERR(-1, "writeFile: scrittura fallita e conseguente rimozione file vuoto fallita");
 			goto wf_clean;
 		}
-	}
-	*/
-/*	//il file resta lockato fino a quando non viene richiesto, eventualmente, dal client di sbloccarlo da unlockFile
-	else{
+	}else{
 		//unlock del file (precedentemente lockato per essere scritto)
 		if (cache_unlockFile(cache, pathname, id) == -1){
 			LOG_ERR(-1, "writeFile: cache_unlock fallita");
 			goto wf_clean;
 		}
 	}
-*/
-	//print_queue(cache); //DEBUG
-	//stampa cache //DEBUG
-	//printf("(SERVER) - writeFile: stampa cache: "); //DEBUG
-	
 
 	//INVIO ESITO WRITE FILE
 	//20 (comunica): esito openFile
@@ -1052,7 +1045,7 @@ static int worker_readNFiles(int fd_c)
 	return -1;
 }
 
-//LOCK 6
+//LOCK FILE 6
 static int worker_lockFile(int fd_c)
 {
 	int* buffer;
@@ -1105,7 +1098,7 @@ static int worker_lockFile(int fd_c)
 
 	//ELABORAZIONE RICHIESTA
 
-	//controllo apertura file
+	//controllo esistenza e apertura del file da lockare
 	file* f = NULL;
 	if( (f = cache_research(cache, pathname)) != NULL && f->f_open == 1)
 		ret_client = cache_lockFile(cache, pathname, id);
@@ -1323,13 +1316,23 @@ static int worker_closeFile(int fd_c)
 	ec_meno1(write(fd_c, buffer, sizeof(int)), "closeFile: write fallita");
 
 
-	//possibilita di aggiornare la LISTA DEI FILE APERTI DA QUI
+	//possibilita di aggiornare la LISTA DEI FILE APERTI DA QUI (!) ->
+	//aggiornare la lista del file chiuso elminando l'id che sta chiudento il file
+	//dalla lista dei processi che hanno aperto il file
+	//la lista dei processi che hanno aperto il file è annessa alla struttura del file stesso
+	//è una lista interi in cui si dovrà cercare il nodo corrispondente all'id del processo che effettua la closeFile ed eliminarlo
 
 	//ELABORAZIONE RICHIESTA
 	file* f;
-	if((f = cache_research(cache, pathname)) == NULL) ret_client = -1;
-	f->f_write = 0;
-	f->f_read = 0;
+	if((f = cache_research(cache, pathname)) == NULL) 
+		ret_client = -1;
+	else{
+		//non è questo quello che deve fare leggi sopra (!)
+		f->f_write = 0;
+		f->f_read = 0;
+		f->f_open = 0;
+		f->f_lock = 0;
+	}
 	
 	//ESITO
 	//(comunica): esito
@@ -1337,7 +1340,7 @@ static int worker_closeFile(int fd_c)
 	ec_meno1(write(fd_c, buffer, sizeof(int)), "closeFile: write 6 fallita");
 	//(riceve): conferma ricezione
 	ec_meno1(read(fd_c, buffer, sizeof(int)), "closeFile: read 3 fallita");
-	if (*buffer != 0){ LOG_ERR(-1, "closeFile: read 3 non valida"); goto cf_clean; }
+	if (*buffer != 0){ LOG_ERR(-1, "closeFile: read 3 non valida"); goto cf_clean; } //controlla
 
 	if(buffer) free(buffer);
 	return 0;
