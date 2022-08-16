@@ -1,10 +1,9 @@
 /*
--> implementare lista dei file aperti e procedura di chiusura quando il client si disconnette
 -> timespec da implementare nelle richieste
 */
 
 #include "client.h"
-int status_conn = 0;
+static int status_conn = 0;
 
 //scritture
 static void case_write_W (char* arg_W)
@@ -69,27 +68,22 @@ static void send_from_dir(const char* dirname, int* n)
 	//chiudere la directory
 	if (closedir(d) == -1) LOG_ERR(errno, "closedir in send_from_dir");
 }
-static int write_request(char* f_name)
+static void write_request(char* f_name)
 {	
 	printf("(CLIENT) - write_request\n"); //DEBUG
 	//openFile + writeFile
-	if (openFile(f_name, (O_CREATE|O_LOCK)) == 0){
+	if (openFile(f_name, (O_CREATE|O_LOCK)) != -1){
 		if (writeFile(f_name, arg_d) == -1){ LOG_ERR(errno, "writeFile"); }
-		if(errno == ENOENT) removeFile(f_name);
 		else insert_node(&open_files_list, f_name);
 	}else{
 		//openFile + appendToFile
 		if (openFile(f_name, 0) != -1){
-			//printf("(CLIENT) - appendToFile in corso...\n"); //DEBUG
-	      	append_request(f_name);
-			insert_node(&open_files_list, f_name);
-		}else{
-			//printf("(CLIENT) - write_request: openFile fallita\n"); //DEBUG
-			return -1;
-		}
+			if(append_request(f_name) != -1) insert_node(&open_files_list, f_name);
+		}else
+			LOG_ERR(errno, "openFile fallita");
 	}
 	printf("(CLIENT) - write_request:	terminata\n"); //DEBUG
-	return 0;
+	return;
 }
 static int append_request(const char* f_name)
 {
@@ -97,39 +91,39 @@ static int append_request(const char* f_name)
 	//apertura del file
 	int fd;
 	if (path_dir != NULL){ 
-		if ((fd = open(path_dir, O_RDONLY)) == -1){ LOG_ERR(errno, "open in append_request"); goto ar_cleanup; }
+		ec_meno1_c((fd = open(path_dir, O_RDONLY)), "open in append_request", ar_clean);
 	}else{ 
-		if ((fd = open(f_name, O_RDONLY)) == -1){ LOG_ERR(errno, "open in append_request"); goto ar_cleanup; }
+		ec_meno1_c((fd = open(f_name, O_RDONLY)), "open in append_request", ar_clean);
 	}
-
 	//stat per ricavare dimensione file
 	struct stat path_stat;
 	if (path_dir != NULL){ 
-		if (lstat(path_dir, &path_stat) == -1){ LOG_ERR(errno, "lstat in append_request"); goto ar_cleanup; }
-	}else{ 
-		if (lstat(f_name, &path_stat) == -1){ LOG_ERR(errno, "lstat in append_request"); goto ar_cleanup; }
+		ec_meno1_c(lstat(path_dir, &path_stat) , "lstat in append_request", ar_clean);
+	}else{
+		ec_meno1_c(lstat(f_name, &path_stat) , "lstat in append_request", ar_clean);
 	}
     	//allocazione buf[size]
     	size_t file_size = path_stat.st_size;
-    	char* buf;
- 	ec_null((buf = calloc(file_size, sizeof(char))) , "append_request");
+    	char* buf = NULL;
+ 	ec_null_c((buf = calloc(file_size, sizeof(char))) , "append_request", ar_clean);
 
  	//lettura file + scrittura del buf
-	if (read(fd, buf, file_size) == -1){ LOG_ERR(errno, "read in append_request"); goto ar_cleanup; }
- 	if (close(fd) == -1){ LOG_ERR(errno, "close in append_request"); goto ar_cleanup; }
+	ec_meno1_c(read(fd, buf, file_size), "read in append_request", ar_clean);
+	ec_meno1_c(close(fd), "close in append_request", ar_clean);
 
     	path_dir = NULL;
+
  	//appendToFile per scrittura f_name atomica
  	if (appendToFile(f_name, buf, file_size, arg_d) == -1){
-		LOG_ERR(errno, "writeFile");
-		goto ar_cleanup;
+		LOG_ERR(errno, "appendToFile");
+		goto ar_clean;
 	}
- 	//cleanup -> con goto? ERRORE?
- 	if (!buf) free(buf);
+
+ 	if (buf) free(buf);
  	return 0;
 
-	ar_cleanup:
-	if (!buf) free(buf);
+	ar_clean:
+	if (buf) free(buf);
  	return -1;
 }
 
@@ -165,8 +159,8 @@ static void read_request (char* arg_r)
 	char* token = strtok_r(arg_r, ",", &save);
 	while (token){
 		//su ogni toker che rappresenta il nome del file invio una richiesta di lettura
-		void **buf;
-		size_t* size;
+		void **buf = NULL;
+		size_t* size = NULL;
 		if(openFile(token, 0) != -1){
 			if(readFile(token, buf, size) == -1)
 				LOG_ERR(errno, "readFile: lettura impossibile");
@@ -228,7 +222,7 @@ static void remove_request(char* arg_c)
 void file_closing(node* open_files_list)
 {
 	while(open_files_list != NULL){
-		closeFile(open_files_list->str);
+		if(closeFile(open_files_list->str) == -1){ LOG_ERR(errno, "closeFile"); return; }
 		open_files_list = open_files_list->next;
 	}
 }
@@ -264,7 +258,7 @@ static void help_message()
     	//allocazione buf[size] per la dimensione del file in byte
     	size_t file_size = path_stat.st_size;
    	char* buf;
- 	ec_null((buf = calloc(file_size, sizeof(char))) , "malloc in append_request");
+ 	ec_null_c((buf = calloc(file_size, sizeof(char))) , "malloc in append_request", hm_clean);
 	
  	//lettura file + scrittura del buf
  	if (read(fd, buf, file_size) == -1){ LOG_ERR(errno, "read in help_message"); goto hm_clean; }
@@ -431,7 +425,7 @@ static void parser(int dim, char** array)
 	c_clean:
 	if(status_conn){ 
 		//file_closing(open_files_list);
-		//dealloc_list(&open_files_list);
+		// dealloc_list(&open_files_list);
 		//chiusura connessione
 		closeConnection(socket_name);
 	}
@@ -439,9 +433,8 @@ static void parser(int dim, char** array)
 }
 
 // MAIN
-int main(int argc, char* argv[]){
-	
-	//controllo su argc
+int main(int argc, char* argv[])
+{	
 	if(argc < 1){
 		LOG_ERR(EINVAL, "main\n");
 		exit(EXIT_FAILURE);
@@ -456,36 +449,34 @@ int main(int argc, char* argv[]){
 //OPEN CONNECTION
 int openConnection(const char* sockname, int msec, const struct timespec abstime)
 {
-	//printf("\n\n"); //DEBUG
-	//controllo validità sockname
+	//controllo sockname
 	if(sockname == NULL){ errno=ENOTSOCK; return -1; }
 
 	//timer setting
 	msec = msec/1000; //conversione da millisecondi a microsecondi per la usleep
 	struct timespec time1, time2, delta;
-      ec_meno1(clock_gettime(CLOCK_REALTIME, &time1), "openConnection");
+      ec_meno1_r(clock_gettime(CLOCK_REALTIME, &time1), "openConnection", -1);
 
-       //socket setting
-      struct sockaddr_un sa;
+      //socket setting
+	struct sockaddr_un sa;
 	size_t len_sockname =  strlen(sockname);
 	strncpy(sa.sun_path, sockname, len_sockname);
 	sa.sun_path[len_sockname] = '\0';
 	sa.sun_family = AF_UNIX;
     
-	if( (fd_sk = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) return -1;
+	if ((fd_sk = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) return -1;
 
 	//ciclo di connessione
       while(connect(fd_sk, (struct sockaddr*)&sa, sizeof(sa)) == -1){
-		//printf("DEBU DEBUG DEBUG sono qui\n");
     	      if(errno == ENOENT){
 			usleep(msec);
 			//seconda misurazione
-			ec_meno1(clock_gettime(CLOCK_REALTIME, &time2), "openConnection");
+			ec_meno1_r(clock_gettime(CLOCK_REALTIME, &time2), "openConnection", -1);
 			//calcola tempo trascorso tra time1 e time2 in delta
 			sub_timespec(time1, time2, &delta);
 			//controllo che non si sia superato il tempo assoluto dal primo tentativo di connessione
 			if( (delta.tv_nsec >= abstime.tv_nsec && delta.tv_sec >= abstime.tv_sec) || delta.tv_sec >= abstime.tv_sec){
-				//LOG_ERR(ETIME, "openConnection");
+				errno = ETIMEDOUT;
 				return -1;
 			}
        	}else{
@@ -493,19 +484,18 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 			return -1;
 		}
       }
-	if(fd_sk != -1) printf("openConnection: connessione con server stabilita\n\n");;
+	if (fd_sk != -1) printf("openConnection: connessione con server stabilita\n\n"); //DEBUG
       return 0;
 }
 
 //CLOSE CONNECTION 
 int closeConnection(const char* sockname) 
 {
-
 	if (!sockname){
-		errno=EINVAL;
+		errno = EINVAL;
+		return -1;
 	}
-    	if (close(fd_sk) == -1 ){
-		LOG_ERR(errno, "client: close fallita");
+    	if (fclose(fd_sk) == -1 ){
 		return -1;  
 	}
     	return 0;
@@ -515,47 +505,46 @@ int closeConnection(const char* sockname)
 int openFile(const char* pathname, int flag)
 {
       //protocollo: C/1(invio dato) -> S/2(ricezione dato) -> S/3 (invio conferma ric. dato) -> C/4(ric. conf. ric dato)
-	//printf("\n\n"); //DEBUG
 	printf("(CLIENT) - openFile: su %s - %s\n", pathname, path_dir); //DEBUG
 
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "openFile: malloc fallita");
+	ec_null_c((buffer = malloc(sizeof(int))), "openFile: malloc fallita", of_clean);
 	*buffer = 0;
 
 	//SETTING RICHIESTA
-      //comunica al thread 1 (codifica openFile=1)
+      //comunica: codifica openFile=1
 	*buffer = 1;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "openFile: write 1 fallita");
-      //3 riceve: conferma accettazione richiesta openFile (1)
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 1 fallita");
-	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida") goto of_clean; }
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile: write fallita", of_clean);
+      //riceve: conferma accettazione richiesta
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
+	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida"); goto of_clean; }
 
       // comunicazione stabilita OK
       // invio dati richiesta al server
       
       //LEN PATHNAME
-	//comunica: invia lunghezza pathname
+	//comunica: lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "openFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile: write fallita", of_clean);
       //7 riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida"); goto of_clean; }
 
 	//PATHANAME
 	//comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "openFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "openFile: write fallita", of_clean);
 	//11 riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 3 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida"); goto of_clean; }
 
 
       //FLAGS
       //comunica: flags
 	*buffer = flag;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "openFile: write 4 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile: write fallita", of_clean);
 	//riceve: conferma ricezione flags
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 4 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida"); goto of_clean; }
 
 
@@ -563,9 +552,9 @@ int openFile(const char* pathname, int flag)
       int id = getpid();
       //comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "openFile: write 5 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile: write fallita", of_clean);
       //riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 5 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "openFile: read non valida"); goto of_clean; }
 
 	//dati inviati al server
@@ -573,35 +562,37 @@ int openFile(const char* pathname, int flag)
 	//RICEZIONE ESITO OPENFILE
 	//riceve: esito openFile
 	int ret;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 6 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
 	ret = *buffer;
-	printf("(CLIENT) - openFile:		ESITO = %d\n", ret); //DEBUG
-	//comunica: ricevuto
+	printf("(CLIENT) - openFile:		ESITO =  "); //DEBUG
+	if(ret == 0) printf("SUCCESSO\n");
+	else printf("FALLITA\n");
+	//comunica: esito ricevuto
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "openFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile: write fallita", of_clean);
 	
 
 	//RICEZIONE DEL FILE EVENTUALMENTE ESPULSO
 	//legge 1 se c'è un file espluso, 0 altrimenti
 	*buffer = 0;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "client: read 7 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "client: read fallita", of_clean);
 	//printf("(CLIENT) - openFile:	file espulso = %d\n", *buf);
 	if(*buffer == 1){
 		//len pathname
 		len = 0;
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 8 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", of_clean);
 		len = *buffer;
 		//pathname
 		char path[++len];
-		ec_meno1(read(fd_sk, buffer, sizeof(char)*len), "openFile: read 9 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "openFile: read fallita", of_clean);
 		path[len+1] = '\0';
 		//size data
 		size_t size_data;
-		ec_meno1(read(fd_sk, buffer, sizeof(char)*len), "openFile: read 10 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "openFile: read fallita", of_clean);
 		size_data = *buffer;
 		//data
 		char data[size_data];
-		ec_meno1(read(fd_sk, data, sizeof(char)*size_data), "openFile: read 11 fallita");
+		ec_meno1_c(read(fd_sk, data, sizeof(char)*size_data), "openFile: read fallita", of_clean);
 		//scrittura file espluso nella directory arg_D
 		if(arg_D != NULL)
 			writefile_in_dir(path, size_data, data);
@@ -619,14 +610,15 @@ int openFile(const char* pathname, int flag)
 //WRITE FILE 2
 int writeFile(const char* pathname, char* dirname)
 {
-	printf("(CLIENT) - writeFile: su: %s\n", pathname); //DEBUG
+	printf("(CLIENT) - writeFile:		su: %s\n", pathname); //DEBUG
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "openFile: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "openFile: malloc fallita", wf_clean);
 	*buffer = 0;
 	char* data_file = NULL;
 	
 	//APERTURA E LETTURA FILE
 	int fd;
+	//ha senso questa distinzione tra path dir e pathname?
 	if (path_dir != NULL){ 
 		if ((fd = open(path_dir, O_RDONLY) == -1)){ LOG_ERR(errno, "writeFile"); goto wf_clean; }
 	}else{ 
@@ -642,10 +634,10 @@ int writeFile(const char* pathname, char* dirname)
 
     	//allocazione buf[size] per la dimensione del file in byte
     	size_t file_size = path_stat.st_size;
- 	ec_null((data_file = calloc(file_size, sizeof(char))) , "writeFile: malloc fallita");
+ 	ec_null_c((data_file = calloc(file_size, sizeof(char))) , "writeFile: malloc fallita", wf_clean);
  	//lettura file + scrittura del buf
- 	ec_meno1(read(fd, data_file, file_size), "writeFile: read fallita");
- 	ec_meno1(close(fd), "writeFile: close fallita");
+ 	ec_meno1_c(read(fd, data_file, file_size), "writeFile: read fallita", wf_clean);
+ 	ec_meno1_c(close(fd), "writeFile: close fallita", wf_clean);
 	path_dir = NULL;
 	
 	///////////////////////////////////////////////////////////////////////////////
@@ -653,11 +645,10 @@ int writeFile(const char* pathname, char* dirname)
 	//SETTING RICHIESTA
       //comunica: "2" al thread  (codifica writeFile=2)
 	*buffer = 2;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma accettazione richiesta
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 1 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida") goto wf_clean; }
-	//f("writeFile: setting richiesta OK\n"); //DEBUG
 
       // comunicazione stabilita OK
       // invio dati richiesta al server 
@@ -666,34 +657,33 @@ int writeFile(const char* pathname, char* dirname)
 	//comunica: lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
-	//printf("writeFile: len pathname OK\n"); //DEBUG
 
 	//PATHANAME
 	//comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "writeFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "writeFile: write fallita", wf_clean);
 	//riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 3 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
 	//printf("writeFile: pathname OK\n"); //DEBUG
 
 	//DIMENSIONE DEL FILE
 	//comunica: file size
 	*buffer = file_size;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita", wf_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
 	//printf("writeFile: file_size OK\n"); //DEBUG
 
 	//DATA FILE
 	//comunica: data file
-	ec_meno1(write(fd_sk, data_file, sizeof(char)*file_size), "writeFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, data_file, sizeof(char)*file_size), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
 	//printf("writeFile: data file OK\n"); //DEBUG
 
@@ -701,9 +691,9 @@ int writeFile(const char* pathname, char* dirname)
       int id = getpid();
       //comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 5 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 5 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	if(*buffer != 0){ LOG_ERR(EBADMSG, "writeFile: read non valida"); goto wf_clean; }
 	//printf("writeFile: pid OK\n"); //DEBUG
 
@@ -714,39 +704,42 @@ int writeFile(const char* pathname, char* dirname)
 	//RICEZIONE ESITO WRITE FILE 
 	//riceve: esito openFile
 	int ret;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 6 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	ret = *buffer;
-	printf("(CLIENT) - writeFile:	ESITO = %d\n", ret); //DEBUG
 	//22 (comunica): ricevuto
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "writeFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write 6 fallita", wf_clean);
+	
+	printf("(CLIENT) - writeFile:	ESITO = %d\n", ret); //DEBUG
+	if(ret == 0) printf("SUCCESSO\n"); //DEBUG
+	else printf("FALLITA\n"); //DEBUG
 
 	//RICEZIONE DEL FILE EVENTUALMENTE ESPULSO
 	//legge 1 se c'è un file espluso, 0 altrimenti
 	*buffer = 0;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 7 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 	//printf("(CLIENT) - openFile:	file espulso = %d\n", *buf);
 	
 	if(*buffer == 1){
 		//len pathname
 		len = 0;
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "writeFile: read 8 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 		len = *buffer;
 		
 		//pathname
 		char path[++len];
-		ec_meno1(read(fd_sk, buffer, sizeof(char)*len), "writeFile: read 9 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "writeFile: read fallita", wf_clean);
 		path[len+1] = '\0';
 		
 		//size data
 		size_t size_data;
-		ec_meno1(read(fd_sk, buffer, sizeof(char)*len), "writeFile: read 10 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "writeFile: read fallita", wf_clean);
 		size_data = *buffer;
 		
 		//data
 		char *arr_data = NULL;
-		ec_null((arr_data = (char*)calloc(sizeof(char), size_data)), "writeFile: calloc fallita");
-		ec_meno1(read(fd_sk, arr_data, sizeof(char)*size_data), "writeFile: read 11 fallita");
+		ec_null_c((arr_data = (char*)calloc(sizeof(char), size_data)), "writeFile: calloc fallita", wf_clean);
+		ec_meno1_c(read(fd_sk, arr_data, sizeof(char)*size_data), "writeFile: read fallita", wf_clean);
 		
 		//scrittura file espluso nella directory arg_D
 		if(dirname != NULL)
@@ -770,54 +763,52 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 {
 	printf("(CLIENT) - appendToFile: su: %s\n", pathname);
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "appendToFile: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "appendToFile: malloc fallita", atf_clean);
 	*buffer = 0;
 
 	//SETTING RICHIESTA
-      //0 comunica al thread 3 (codifica appendToFile=2)
+      //comunica al thread 3 (codifica appendToFile=2)
 	*buffer = 3;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "appendToFile: write 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //3 riceve: conferma accettazione richiesta openFile (1)
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 1 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida") goto atf_clean; }
 
-
-      // comunicazione stabilita OK
+      // comunicazione stabilita
       // invio dati richiesta al server 
       
-
       //LEN PATHNAME
 	//comunica: lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "appendToFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
 
 
 	//PATHANAME
 	//comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "appendToFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "appendToFile: write fallita", atf_clean);
 	//11 riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 3 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
 
 
 	//DIMENSIONE DEL FILE
 	//comunica: file size
 	*buffer = size;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "appendToFile: write 4 fallita");
-      //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 4 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
+      //riceve: conferma ricezione file size
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
 
 
 	//DATA FILE
 	//comunica: data file
-	ec_meno1(write(fd_sk, (char*)buf, sizeof(char)*size), "appendToFile: write 5 fallita");
+	ec_meno1_c(write(fd_sk, (char*)buf, sizeof(char)*size), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione data file
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 5 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
 
 
@@ -825,9 +816,9 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
       int id = getpid();
       //comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "appendToFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 6 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
 
 	
@@ -835,43 +826,45 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	//dati inviati al server
 	///////////////////////////////////////////////////////////////////////////////
 	
-	
-	//RICEZIONE ESITO appendToFile
+	//RICEZIONE ESITO
 	//riceve: esito openFile
 	int ret;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 7 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	ret = *buffer;
-	printf("(CLIENT) - appendToFile:	ESITO = %d\n", ret); //DEBUG
 	//comunica: ricevuto
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "appendToFile: write 7 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
 
+	printf("(CLIENT) - appendToFile:	ESITO = %d\n", ret); //DEBUG
+	if(ret == 0) printf("SUCCESSO\n"); //DEBUG
+	else printf("FALLITA\n"); //DEBUG
 
 	//RICEZIONE DEL FILE EVENTUALMENTE ESPULSO
 	//legge 1 se c'è un file espluso, 0 altrimenti
 	*buffer = 0;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 8 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	//printf("(CLIENT) - openFile:	file espulso = %d\n", *buf);
 	char* arr_data = NULL;
+	
 	if(*buffer == 1){
 		//len pathname
 		int len_path;
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "appendToFile: read 9 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 		len_path = *buffer;
 		
 		//pathname
 		char path[len_path+1];
-		ec_meno1(read(fd_sk, buffer, sizeof(char)*len), "appendToFile: read 10 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "appendToFile: read fallita", atf_clean);
 		path[len_path+1] = '\0';
 		
 		//size data
 		size_t size_data;
-		ec_meno1(read(fd_sk, buffer, sizeof(char)*len), "appendToFile: read 11 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "appendToFile: read fallita", atf_clean);
 		size_data = *buffer;
 		
 		//data
-		ec_null((arr_data = (char*)calloc(sizeof(char), size_data)), "appendToFile: calloc fallita");
-		ec_meno1(read(fd_sk, arr_data, sizeof(char)*size_data), "appendToFile: read 12 fallita");
+		ec_null_c((arr_data = (char*)calloc(sizeof(char), size_data)), "appendToFile: calloc fallita", atf_clean);
+		ec_meno1_c(read(fd_sk, arr_data, sizeof(char)*size_data), "appendToFile: read fallita", atf_clean);
 		
 		//scrittura file espluso nella directory arg_D
 		if(dirname != NULL)
@@ -895,7 +888,7 @@ int readFile(const char* pathname, void** buf, size_t* size)
 
 	printf("(CLIENT) - readFile: su: %s\n", pathname);
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "readFile: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "readFile: malloc fallita", rf_clean);
 	*buffer = 0;
 	char* data = NULL;
 	int id;
@@ -903,11 +896,11 @@ int readFile(const char* pathname, void** buf, size_t* size)
 	int ret;
 
 	//SETTING RICHIESTA
-      //comunica al thread 4 (codifica readFile=3)
+      //comunica al thread 4 (codifica readFile)
 	*buffer = 4;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 1 fallita");
-      //riceve: conferma accettazione richiesta openFile (1)
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readFile: write fallita", rf_clean);
+      //riceve: conferma accettazione richiesta
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readFile: read fallita", rf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida") goto rf_clean; }
 	
 
@@ -918,40 +911,43 @@ int readFile(const char* pathname, void** buf, size_t* size)
       id = getpid();
       //16 comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readFile: write fallita", rf_clean);
       //19 riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 6 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readFile: read fallita", rf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rf_clean; }
       
 	//LEN PATHNAME
 	//comunica: invia lunghezza pathname
 	len_path = strlen(pathname);
 	*buffer = len_path;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readFile: write fallita", rf_clean);
       //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readFile: read fallita", rf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rf_clean; }
 
 
 	//PATHANAME
 	//comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len_path), "readFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len_path), "readFile: write fallita", rf_clean);
 	//riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 3 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readFile: read fallita", rf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rf_clean; }
 
 
 	//RICEZIONE ESITO readFile
 	// riceve: esito openFile
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 7 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readFile: read fallita", rf_clean);
 	ret = *buffer;
 	// comunica: conferma ricezione
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 7 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readFile: write fallita", rf_clean);
 
 	//se il file non esiste, finisce qui
 	if(ret == -1){
-		printf("(CLIENT) - readFile:		LETTURA NON RIUSCITA\n"); //DEBUG
+		errno = ENOENT;
+		printf("(CLIENT) - readFile:	ESITO = %d\n", ret); //DEBUG
+		if(ret == 0) printf("SUCCESSO\n"); //DEBUG
+		else printf("FALLITA\n"); //DEBUG
 		goto rf_clean;
 	}
 
@@ -959,27 +955,27 @@ int readFile(const char* pathname, void** buf, size_t* size)
 	//riceve: dimensione
 	size_t dim_file;
 	size=&dim_file;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readFile: read 3 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readFile: read fallita", rf_clean);
 	dim_file = (size_t)*buffer; //cast dovrebbe essere implicito
 	//comunica: conferma ricezione
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readFile: write fallita", rf_clean);
 
 
 	//DATA FILE
 	//riceve: data
-	ec_null((data = calloc(sizeof(char), (*size))), "readFile: calloc fallita");
-	ec_meno1(read(fd_sk, data, sizeof(char)*(*size)), "readFile: read 3 fallita");
-	//buf = &data;  //BUG CON ASSEGNAMENTO BUFFER (!) ATTENZIONE QUIIIII - SETTA IL PUNTATORE VOID **
+	ec_null_c((data = calloc(sizeof(char), (*size))), "readFile: calloc fallita", rf_clean);
+	ec_meno1_c(read(fd_sk, data, sizeof(char)*(*size)), "readFile: read fallita", rf_clean);
+	//buf = &data;  //BUG CON ASSEGNAMENTO BUFFER (!) ATTENZIONE QUIIIII - SETTA IL PUNTATORE VOID ** <-------------------
 	//comunica: conferma ricezione
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readFile: write fallita", rf_clean);
 
-	printf("(CLIENT) - readFile:	ESITO = %d | letto: %s / %zu bytes\n", ret, pathname, dim_file); //DEBUG
+	printf("(CLIENT) - readFile	letto: %s / %zu bytes\n", pathname, dim_file); //DEBUG
 	
 	if(buffer) free(buffer);
 	if(data) free(data);
-	return 0;
+	return ret;
 
 	rf_clean:
 	if(buffer) free(buffer);
@@ -991,105 +987,99 @@ int readFile(const char* pathname, void** buf, size_t* size)
 //READ N FILES 5
 int readNFiles(int N, const char* dirname )
 {		
-	printf("(CLIENT) - readNFiles: su: %d\n", N);
+	printf("(CLIENT) - readNFiles su %d files\n", N);
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "readNFiles: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "readNFiles: malloc fallita", rnf_clean);
 	*buffer = 0;
 	char* data_file = NULL;
 
 	//SETTING RICHIESTA
       //comunica al thread 5 (codifica readNFiles=5)
 	*buffer = 5;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
       //riceve: conferma accettazione richiesta openFile (1)
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 1 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida") goto rnf_clean; }
-	printf("(CLIENT) - readNFiles: setting richiesta OK\n");
-	
 
       // comunicazione stabilita OK
       // invio dati richiesta al server 
 
-	
 	//IDENTIFICAZIONE PROCESSO
       int id = getpid();
       //16 comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 5 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
       //19 riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 5 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
-	printf("(CLIENT) - readNFiles: identificazione processo  OK\n");
 
 
       //NUMERO DI FILE DA LEGGERE
 	//comunica: n
 	*buffer = N;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
       //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 2 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "readFile: read non valida"); goto rnf_clean; }
-	printf("(CLIENT) - readNFiles: numero di file da leggere OK\n");
 
 
 	while(1) {
-		printf("(CLIENT) - BUG HERE?\n");
+		//locko prima di leggere i file?? o tutto in diretta?
+		printf("(CLIENT) - BUG HERE?\n"); //DEBUG 
 		//CONDIZIONE DI TERMINAZIONE
 		//riceve: condizione di  terminazione
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 3 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 		if(*buffer != 1) break;
 		*buffer = 0;
-		ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita");
-		printf("(CLIENT) - readNFiles: condizione di terminazione OK\n");
+		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
+		printf("(CLIENT) - readNFiles: condizione di terminazione OK\n"); //DEBUG
 
 
 		//CONTROLLO LOCK FILE
 		//riceve: flag lock 
 		int not_lock;
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 3 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 		not_lock = *buffer;
 		*buffer = 0;
-		ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita");
-		printf("(CLIENT) - readNFile: controllo lock file OK\n");
+		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 2 fallita", rnf_clean);
+		printf("(CLIENT) - readNFile: controllo lock file OK\n"); //DEBUG
 
-
-		if(not_lock){
-			
+		if(not_lock){			
 			//LEN FILE NAME
 			//riceve: lunghezza nome file
 			int len_name;
-			ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 3 fallita");
+			ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 			len_name = *buffer; //cast dovrebbe essere implicito
 			//comunica: conferma ricezione
 			*buffer = 0;
-			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
+			ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 
 			//FILE NAME
 			//riceve:
 			char file_name[len_name];
 			file_name[len_name] = '\0';
-			ec_meno1(read(fd_sk, file_name, sizeof(char)*len_name), "readNFiles: read 3 fallita");
+			ec_meno1_c(read(fd_sk, file_name, sizeof(char)*len_name), "readNFiles: read fallita", rnf_clean);
 			//comunica: conferma ricezione
 			*buffer = 0;
-			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
+			ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 
 			//FILE SIZE
 			//riceve: dimensione
 			size_t dim_file;
-			ec_meno1(read(fd_sk, buffer, sizeof(int)), "readNFiles: read 3 fallita");
+			ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 			dim_file = (size_t)*buffer;  //cast implicito?
 			//comunica: conferma ricezione
 			*buffer = 0;
-			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
+			ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 	
 			//DATA FILE 
 			
-			ec_null((data_file = calloc(sizeof(char), dim_file)), "readNFiles: calloc fallita");
+			ec_null_c((data_file = calloc(sizeof(char), dim_file)), "readNFiles: calloc fallita", rnf_clean);
 			//riceve: data
-			ec_meno1(read(fd_sk, data_file, sizeof(char)*dim_file), "readNFiles: read 3 fallita");
+			ec_meno1_c(read(fd_sk, data_file, sizeof(char)*dim_file), "readNFiles: read fallita", rnf_clean);
 			//comunica: conferma ricezione
 			*buffer = 0;
-			ec_meno1(write(fd_sk, buffer, sizeof(int)), "readNFiles: write 3 fallita");
+			ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 			printf("(CLIENT) - readFile: letto: %s / %zu bytes\n", file_name, dim_file); //DEBUG
 
 			if (arg_d != NULL)
@@ -1117,16 +1107,16 @@ int lockFile(const char* pathname)
 	printf("(CLIENT) - lockFile: su %s \n", pathname); //DEBUG
 	int ret;
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "lockFile: malloc fallita");
+	ec_null_c((buffer = malloc(sizeof(int))), "lockFile: malloc fallita", lf_clean);
 	*buffer = 0;
 
 	while(1){
 		//SETTING RICHIESTA
-      	//comunica al thread 6 (codifica lockFile=6)
+      	//comunica: codifica lockFile=6
 		*buffer = 6;
-		ec_meno1(write(fd_sk, buffer, sizeof(int)), "lockFile: write 1 fallita");
+		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
      		//riceve: conferma accettazione richiesta openFile (1)
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "lockFile: read 1 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "lockFile: read fallita", lf_clean);
 		if(*buffer != 0){ LOG_ERR(-1, "lockFile: read non valida") goto lf_clean; }
 
       	// comunicazione stabilita OK
@@ -1136,38 +1126,37 @@ int lockFile(const char* pathname)
 		//comunica: invia lunghezza pathname
 		int len = strlen(pathname);
 		*buffer = len;
-		ec_meno1(write(fd_sk, buffer, sizeof(int)), "lockFile: write 2 fallita");
+		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
      		//riceve: conferma ricezione pathname
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "lockFile: read 2 fallita");
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "lockFile: read fallita", lf_clean);
 		if(*buffer != 0){ LOG_ERR(-1, "lockFile: read non valida"); goto lf_clean; }
 
 		//PATHANAME
 		//comunica: pathname
-		ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "lockFile: write 3 fallita");
-		//11 riceve: conferma ricezione pathname
-     		ec_meno1(read(fd_sk, buffer, sizeof(int)), "lockFile: read 3 fallita");
+		ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "lockFile: write fallita", lf_clean);
+		//riceve: conferma ricezione pathname
+     		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "lockFile: read fallita", lf_clean);
 		if(*buffer != 0){ LOG_ERR(-1, "lockFile: read non valida"); goto lf_clean; }
 
 
     		//IDENTIFICAZIONE PROCESSO
       	int id = getpid();
-      	//16 comunica: pid
+      	//comunica: pid
       	*buffer = id;
-		ec_meno1(write(fd_sk, buffer, sizeof(int)), "lockFile: write 5 fallita");
-      	//19 riceve: conferma ricezione pid
-      	ec_meno1(read(fd_sk, buffer, sizeof(int)), "lockFile: read 5 fallita");
+		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
+      	//riceve: conferma ricezione pid
+      	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "lockFile: read fallita", lf_clean);
 		if(*buffer != 0){ LOG_ERR(-1, "lockFile: read non valida"); goto lf_clean; }
 
 		//dati inviati al server
 	
 		//RICEZIONE ESITO OPENFILE
-		//21 (riceve): esito openFile
-		
-		ec_meno1(read(fd_sk, buffer, sizeof(int)), "lockFile: read 6 fallita");
+		//riceve: esito openFile
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "lockFile: read fallita", lf_clean);
 		ret = *buffer;
-		//22 (comunica): ricevuto
+		//comunica: ricevuto
 		*buffer = 0;
-		ec_meno1(write(fd_sk, buffer, sizeof(int)), "lockFile: write 6 fallita");
+		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
 		if( *buffer == -2 ){
 			int msec = LOCK_TIMER/1000;
 			usleep(msec);
@@ -1191,62 +1180,62 @@ int unlockFile(const char* pathname)
 	printf("(CLIENT) - unlockFile: su %s\n", pathname); //DEBUG
 
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "unlockFile: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "unlockFile: malloc fallita", uf_clean);
 	*buffer = 0;
 
 	//SETTING RICHIESTA
-      //0 comunica al thread 7 (codifica unlockFile=7)
+      //comunica: codifica unlockFile=7
 	*buffer = 7;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "unlockFile: write 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
       //3 riceve: conferma accettazione richiesta openFile (1)
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "unlockFile: read 1 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida") goto lf_clean; }
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida") goto uf_clean; }
 
       // comunicazione stabilita OK
       // invio dati richiesta al server
       
       //LEN PATHNAME
-	//4 comunica: invia lunghezza pathname
+	//comunica: lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "unlockFile: write 2 fallita");
-      //7 riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "unlockFile: read 2 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto lf_clean; }
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
+      //riceve: conferma ricezione pathname
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto uf_clean; }
 
 	//PATHANAME
-	//8 comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "unlockFile: write 3 fallita");
-	//11 riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "unlockFile: read 3 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto lf_clean; }
+	//comunica: pathname
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "unlockFile: write fallita", uf_clean);
+	//riceve: conferma ricezione pathname
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto uf_clean; }
 
 
       //IDENTIFICAZIONE PROCESSO
       int id = getpid();
-      //16 comunica: pid
+      //comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "unlockFile: write 5 fallita");
-      //19 riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "unlockFile: read 5 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto lf_clean; }
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
+      //riceve: conferma ricezione pid
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto uf_clean; }
 
 	//dati inviati al server
 	
 	//RICEZIONE ESITO OPENFILE
-	//21 (riceve): esito openFile
+	//riceve: esito openFile
 	int ret;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "openFile: read 6 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile: read fallita", uf_clean);
 	ret = *buffer;
 	printf("(CLIENT) - unlockFile:		ESITO = %d\n", ret); //DEBUG
-	//22 (comunica): ricevuto
+	//comunica: ricevuto
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "unlockFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
 
 	if(buffer) free(buffer);
 	return ret;
 
-	lf_clean:
+	uf_clean:
 	if(buffer) free(buffer);
 	return -1;
 	
@@ -1258,16 +1247,16 @@ int removeFile(const char* pathname)
 	printf("(CLIENT) - removeFile: su %s\n", pathname); //DEBUG
 
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "removeFile: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "removeFile: malloc fallita", rf_clean);
 	*buffer = 0;
 
 	//SETTING RICHIESTA
       //0 comunica al thread 1 (codifica removeFile=8)
 	*buffer = 8;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "removeFile: write 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "removeFile: write fallita", rf_clean);
       //3 riceve: conferma accettazione richiesta openFile (1)
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "removeFile: read 1 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida") goto uf_clean; }
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "removeFile: read fallita", rf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida") goto rf_clean; }
 
       // comunicazione stabilita OK
       // invio dati richiesta al server
@@ -1276,44 +1265,44 @@ int removeFile(const char* pathname)
 	//4 comunica: invia lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "removeFile: write 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "removeFile: write fallita", rf_clean);
       //7 riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "removeFile: read 2 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto uf_clean; }
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "removeFile: read fallita", rf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto rf_clean; }
 
 	//PATHANAME
 	//8 comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "removeFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "removeFile: write fallita", rf_clean);
 	//11 riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "removeFile: read 3 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto uf_clean; }
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "removeFile: read fallita", rf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto rf_clean; }
 
 
       //IDENTIFICAZIONE PROCESSO
       int id = getpid();
       //16 comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "removeFile: write 5 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "removeFile: write fallita", rf_clean);
       //19 riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "removeFile: read 5 fallita");
-	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto uf_clean; }
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "removeFile: read fallita", rf_clean);
+	if(*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto rf_clean; }
 
 	//dati inviati al server
 	
 	//RICEZIONE ESITO OPENFILE
 	//21 (riceve): esito openFile
 	int ret;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "removeFile: read 6 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "removeFile: read fallita", rf_clean);
 	ret = *buffer;
 	printf("(CLIENT) - removeFile:		ESITO = %d\n", ret); //DEBUG
 	//22 (comunica): ricevuto
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "removeFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "removeFile: write fallita", rf_clean);
 
 	if(buffer) free(buffer);
 	return ret;
 
-	uf_clean:
+	rf_clean:
 	if(buffer) free(buffer);
 	return -1;
 }
@@ -1324,34 +1313,34 @@ int closeFile(const char* pathname)
 	printf("(CLIENT) - closeFile: su %s\n", pathname); //DEBUG
 
 	int* buffer;
-	ec_null( (buffer = malloc(sizeof(int))), "closeFile: malloc fallita");
+	ec_null_c( (buffer = malloc(sizeof(int))), "closeFile: malloc fallita", cf_clean);
 	*buffer = 0;
 
 	//SETTING RICHIESTA
-      //comunica: 9 al thread (codifica closeFile=9)
+      //comunica: codifica closeFile=9
 	*buffer = 9;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "closeFile: write 1 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "closeFile: write fallita", cf_clean);
       //riceve: conferma accettazione richiesta 
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "closeFile: read 1 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "closeFile: read fallita", cf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "closeFile: read non valida") goto cf_clean; }
 
       // comunicazione stabilita OK
       // invio dati richiesta al server
       
       //LEN PATHNAME
-	//comunica: invia lunghezza pathname
+	//comunica: lunghezza pathname
 	int len = strlen(pathname);
 	*buffer = len;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "closeFile: write 2 fallita");
-      //riceve: conferma ricezione pathname
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "closeFile: read 2 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "closeFile: write fallita", cf_clean);
+      //riceve: conferma ricezione lunghezza pathname
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "closeFile: read fallita", cf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "closeFile: read non valida"); goto cf_clean; }
 
 	//PATHANAME
 	//comunica: pathname
-	ec_meno1(write(fd_sk, pathname, sizeof(char)*len), "closeFile: write 3 fallita");
+	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "closeFile: write fallita", cf_clean);
 	//riceve: conferma ricezione pathname
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "closeFile: read 3 fallita");
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "closeFile: read fallita", cf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "closeFile: read non valida"); goto cf_clean; }
 
 
@@ -1359,9 +1348,9 @@ int closeFile(const char* pathname)
       int id = getpid();
       //comunica: pid
       *buffer = id;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "closeFile: write 5 fallita");
-      //19 riceve: conferma ricezione pid
-      ec_meno1(read(fd_sk, buffer, sizeof(int)), "closeFile: read 5 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "closeFile: write fallita", cf_clean);
+      //riceve: conferma ricezione pid
+      ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "closeFile: read fallita", cf_clean);
 	if(*buffer != 0){ LOG_ERR(-1, "closeFile: read non valida"); goto cf_clean; }
 
 	//dati inviati al server
@@ -1372,14 +1361,14 @@ int closeFile(const char* pathname)
 
 
 	//RICEZIONE ESITO OPENFILE
-	//21 (riceve): esito openFile
+	//riceve: esito openFile
 	int ret;
-	ec_meno1(read(fd_sk, buffer, sizeof(int)), "closeFile: read 6 fallita");
+	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "closeFile: read fallita", cf_clean);
 	ret = *buffer;
 	printf("(CLIENT) - closeFile:		ESITO = %d\n", ret); //DEBUG
-	//22 (comunica): ricevuto
+	//comunica: ricevuto
 	*buffer = 0;
-	ec_meno1(write(fd_sk, buffer, sizeof(int)), "closeFile: write 6 fallita");
+	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "closeFile: write fallita", cf_clean);
 
 	if(buffer) free(buffer);
 	return ret;

@@ -24,7 +24,7 @@ static void help_message();
 static int set_socket(const char* socket_name);
 static void send_from_dir(const char* dirname, int* n);
 static int append_request(const char* s);
-static int write_request(char* arg_W);
+static void write_request(char* arg_W);
 static void case_write_w(char* arg_w);
 static void case_write_W (char* arg_W);
 static void lock_request(char* arg_l);
