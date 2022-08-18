@@ -1,5 +1,5 @@
 #include "aux_function.h"
-
+enum { NS_PER_SECOND = 1000000000 };
 int is_opt( char* arg, char* opt)
 {
 	size_t n = strlen(arg);

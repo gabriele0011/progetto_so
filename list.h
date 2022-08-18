@@ -10,6 +10,6 @@ typedef struct _node
 void insert_node(node** list, char* string);
 node* extract_node(node** list);
 void dealloc_list(node** list);
-//node* search_node(node* list, char* string);
-//void remove_node(node** list, char* string);
+node* search_node(node* list, char* string);
+void remove_node(node** list, char* string);
 

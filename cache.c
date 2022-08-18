@@ -89,28 +89,31 @@ void cache_capacity_update(int dim_file, int new_file_or_not)
 	printf("(STATO CACHE) : cache used memory = %lu di %zu - files in cache = %zu\n", used_mem, cache_capacity, files_in_cache);
 	mutex_unlock(&mtx, "cache: unlock fallita in cache_capacity_update");
 }
-file* cache_dealloc(file* cache)
+void cache_dealloc(file** cache)
 {
 	mutex_lock(&mtx, "cache_dealloc: lock fallita");
-	if(cache == NULL){ 
+	if(*cache == NULL){ 
+		*cache = NULL;
 		mutex_unlock(&mtx, "cache_dealloc: lock fallita");
-		return  NULL;
+		return;
 	}
-	if(cache->next == NULL){
-		free(cache);
+	if((*cache)->next == NULL){
+		free(*cache);
+		*cache = NULL;
 		mutex_unlock(&mtx, "cache_dealloc: lock fallita");
-		return NULL;
+		return;
 	}
 
-	file* curr = cache;
+	file* curr = *cache;
 	file* prev;
 	while (curr->next != NULL){
 		prev = curr;
-		curr= curr->next;
+		curr = curr->next;
 		free(prev);
 	}
+	*cache = NULL;
 	mutex_unlock(&mtx, "cache_dealloc: unlock fallita");
-	return NULL;
+	return;
 }
 int cache_removeFile(file** cache, char* f_name, int id)
 {
@@ -241,23 +244,22 @@ int cache_enqueue(file** cache, char* f_name, char* f_data, size_t dim_f, int id
 	//l'inserimento diventa in coda e l'estrazione in testa in O(1) nel caso ottimo
 	//CREAZIONE + SETTING
       file* new = NULL;
-	ec_null((new = malloc(sizeof(file))), "cache_enqueue: malloc fallita");
+	ec_null_r((new = malloc(sizeof(file))), "cache_enqueue: malloc fallita", -1);
 	new->next = NULL;
 	new->f_size = dim_f;
 	//len pathname + pathname
 	size_t len_f_name = strlen(f_name);
-	ec_null((new->f_name = calloc(sizeof(char), len_f_name+1)), "cache_enqueue: calloc fallita");
+	ec_null_r((new->f_name = calloc(sizeof(char), len_f_name+1)), "cache_enqueue: calloc fallita", -1);
 	new->f_name[len_f_name+1] = '\0';
 	strncpy(new->f_name, f_name, len_f_name);
 	//permessi di scrittura/lettura
 	new->f_read = 1;
 	new->f_write = 1;
-	new->f_open = 1; //se f_open = 1 sappiamo che il file è stato aperto da qualcuno
+	new->f_open = 1; //se f_open = 1 sappiamo che il file è stato aperto da qualcuno - è un flag indicativo, forse inutile (!)
       new->f_lock = id;
 	//aggiunge/aggiorna lista dei processi che hanno aperto il file
 	char char_id[101];
 	itoa(id, char_id);
-	printf("char_id: %s\n", char_id);
 	insert_node(&(new->id_list), char_id);
 
 	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
@@ -309,11 +311,11 @@ file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, i
 	print_queue(*cache); //DEBUG
 	// CREAZIONE DEL NUOVO NODO
       file* new;
-	ec_null((new = (file*)malloc(sizeof(file))), "replace_to_write: malloc fallita");
+	ec_null_r((new = (file*)malloc(sizeof(file))), "replace_to_write: malloc fallita", NULL);
 	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
-		 LOG_ERR(errno, "replace_to_write: pthread_mutex_init fallita");
+		 LOG_ERR(errno, "replace_to_write:");
 		 free(new);
-		 exit(EXIT_FAILURE);	
+		 return NULL;	
 	}
       //setting
 	new->f_size = dim_f;
@@ -323,7 +325,7 @@ file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, i
 	new->f_lock = id;	
 	new->next = NULL;     
       size_t len_f_name = strlen(f_name);
-	ec_null((new->f_name = calloc(sizeof(char), len_f_name)), "replace_to_write: errore calloc"); 
+	ec_null_r((new->f_name = calloc(sizeof(char), len_f_name)), "replace_to_write: errore calloc", NULL); 
 	strncpy(new->f_name, f_name, len_f_name);
 
 	file* rep = NULL;
@@ -427,24 +429,25 @@ int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, i
 {
 	//CONTROLLO PRELIMINARE
 	if (cache_capacity < dim_f){
-		LOG_ERR(EFBIG, "cache_appendToFile: ");
+		errno = EFBIG; //da controllare al ritorno per il client
+		LOG_ERR(EFBIG, "cache_appendToFile: "); //log errore per il server
 		return -1;
       }
 	file* file_ex = NULL;
-	printf("(CACHE) - cache_appendToFile:	su file_name:%s | size_file=%zu | id=%d\n", f_name, dim_f, id);
+	printf("(CACHE) - cache_appendToFile:	su file_name:%s | size_file=%zu | id=%d\n", f_name, dim_f, id); //DEBUG
 	//controllo capacità memoria per rimpiazzo
 	if(used_mem+dim_f > cache_capacity){
 		printf("cache_appendToFile:	(!) rimpiazzo necessario\n");
 		if((file_ex = replace_to_append(cache, f_name, f_data, dim_f, id)) == NULL){
-			printf("(CACHE) - cache_appendToFile: 		scrittura in append su %s (%zubyte) fallita - rimpiazzo impossibile\n", f_name, dim_f);
+			printf("(CACHE) - cache_appendToFile: 		scrittura in append su %s (%zubyte) fallita - rimpiazzo impossibile\n", f_name, dim_f); //DEBUG
 			return -1;
 		}else{
 			expelled_file = &(file_ex);
-			printf("(CACHE) - cache_appendToFile:	append riuscita - file rimpiazzato: %s - scrittura avvenuta\n", (file_ex)->f_name);
+			printf("(CACHE) - cache_appendToFile:	append riuscita - file rimpiazzato: %s - scrittura avvenuta\n", (file_ex)->f_name); //DEBUG
 			return 0;
 		}
 	}
-	printf("(CACHE) - cache_appendToFile: 	scrittura in append senza rimpiazzo su %s...(%zu byte)\n", f_name, dim_f);
+	printf("(CACHE) - cache_appendToFile: 	scrittura in append senza rimpiazzo su %s...(%zu byte)\n", f_name, dim_f); //DEBUG
 
 	size_t found = 0;
 	file* node;
@@ -470,11 +473,11 @@ int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, i
 			mutex_unlock(&(aux->mtx), "cache_appendToFile: unlock fallita");
 		}
 		
-		if (strcmp(prev->f_name, f_name) == 0){
+		if (strcmp(prev->f_name, f_name) == 0 && (prev->f_lock == 0 || prev->f_lock == id)){
 			found = 1;
 			node = prev;
 		}else{
-			if (strcmp(curr->f_name, f_name) == 0){
+			if (strcmp(curr->f_name, f_name) == 0 && (curr->f_lock == 0 || curr->f_lock == id)){
 				found = 1;
 				node = curr;
 			}
@@ -485,8 +488,8 @@ int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, i
 	if (found){
 		mutex_lock(&(node->mtx), "cache_appendToFile: lock fallita");
 		size_t new_size = dim_f + node->f_size;
-		if(node->f_size == 0){ ec_null( (node->f_data = (char*)calloc(sizeof(char), new_size)), "cache_appendToFile: calloc fallita"); }
-		else{ ec_null( (node->f_data = (char*)realloc(node->f_data, new_size)), "cache_appendToFile: calloc fallita"); }
+		if(node->f_size == 0){ ec_null_r( (node->f_data = (char*)calloc(sizeof(char), new_size)), "cache_appendToFile: calloc fallita", -1); }
+		else{ ec_null_r( (node->f_data = (char*)realloc(node->f_data, new_size)), "cache_appendToFile: calloc fallita", -1); }
 		int j = 0; int i = node->f_size;
 		while (j < dim_f && i < new_size){
 			node->f_data[i] = f_data[j];
@@ -593,8 +596,8 @@ file* replace_to_append(file** cache, char* f_name, char* f_data, size_t dim_f, 
 	if ((used_mem+dim_f) <= cache_capacity){
 		mutex_lock(&(node->mtx), "replace_to_append: lock fallita");
 		size_t new_size = dim_f + node->f_size;
-		if(node->f_size == 0){ ec_null( (node->f_data = (char*)calloc(sizeof(char), new_size) ), "replace_to_append: calloc fallita"); }
-		else{ ec_null( (node->f_data = (char*)realloc(node->f_data, new_size)), "replace_to_append: calloc fallita"); }
+		if(node->f_size == 0){ ec_null_r( (node->f_data = (char*)calloc(sizeof(char), new_size) ), "replace_to_append: calloc fallita", NULL); }
+		else{ ec_null_r( (node->f_data = (char*)realloc(node->f_data, new_size)), "replace_to_append: calloc fallita", NULL); }
 		int j = 0; int i = node->f_size;
 		while (j < dim_f && i < new_size){
 			node->f_data[i] = f_data[j];

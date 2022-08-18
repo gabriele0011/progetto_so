@@ -4,7 +4,7 @@ int enqueue(t_queue** queue, int data)
 {
 	//creazione nuovo nodo + setting
 	t_queue* new;
-	ec_null((new = malloc(sizeof(t_queue))), "cache: malloc cache_writeFile fallita");
+	ec_null_r((new = malloc(sizeof(t_queue))), "cache: malloc cache_writeFile fallita", -1);
 	new->next = NULL;
 	new->data = data;
 	if (pthread_mutex_init(&(new->mtx), NULL) != 0){
@@ -96,7 +96,7 @@ void dealloc_queue(t_queue** queue)
 	}
 	//coda non vuota
 	while(*queue != NULL){
-		t_queue* temp = queue;
+		t_queue* temp = *queue;
 		*queue = (*queue)->next;
 		free(temp);
 	}

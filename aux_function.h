@@ -1,6 +1,6 @@
 #include "header_file.h"
 #include "error_ctrl.h"
-enum { NS_PER_SECOND = 1000000000 };
+
 
 //funzioni ausiliarie
 long is_number(const char* s);
@@ -10,4 +10,3 @@ int is_directory(const char *path);
 void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td);
 void reverse(char s[]);
 void itoa(int n, char s[]);
-

@@ -30,7 +30,7 @@ void insert(file** head, int id);
 
 //prototipi 
 void create_cache(int mem_size, int max_file_in_cache);
-file* cache_dealloc(file* cache);
+void cache_dealloc(file** cache);
 
 void cache_capacity_update(int dim_file, int new_file_or_not);
 file* cache_research(file* cache, char* f_name);
