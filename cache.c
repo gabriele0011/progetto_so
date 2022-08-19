@@ -12,14 +12,14 @@ void create_cache(int mem_size, int max_file_in_cache)
 }
 file* cache_research(file* cache, char* f_name)
 {
-	printf("(CACHE) - cache_research:	cerco %s\n", f_name); //DEBUG
+	//printf("(CACHE) - cache_research:	cerco %s\n", f_name); //DEBUG
 	//print_queue(cache); //DEBUG
 	file* node = NULL;
 	//CODA VUOTA
 	mutex_lock(&mtx, "cache: lock fallita in cache_duplicate_control");
 	if (cache == NULL){
 		mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
-		printf("(CACHE) - cache_research:	cache vuota\n"); //DEBUG
+		//printf("(CACHE) - cache_research:	cache vuota\n"); //DEBUG
 		return NULL;
 	}
 	mutex_unlock(&mtx, "cache: lock fallita in cache_duplicate_control");
@@ -29,11 +29,11 @@ file* cache_research(file* cache, char* f_name)
 	if (cache->next == NULL){
 		if(strcmp(cache->f_name, f_name) == 0){
 			mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
-			printf("(CACHE) - cache_research:	trovato\n"); //DEBUG
+			//printf("(CACHE) - cache_research:	trovato\n"); //DEBUG
 			return cache;
 		}else{
 			mutex_unlock(&(cache->mtx), "cache: lock fallita in cache_duplicate_control");
-			printf("(CACHE) - cache_research:	non trovato\n"); //DEBUG
+			//printf("(CACHE) - cache_research:	non trovato\n"); //DEBUG
 			return NULL;
 		}
 	}
@@ -74,10 +74,10 @@ file* cache_research(file* cache, char* f_name)
 	mutex_unlock(&(curr->mtx), "cache: unlock fallita in cache_duplicate_control");
 	//printf("CACHE - cache_research: fine ricerca %s\n", f_name); //DEBUG
 	if (!found){ 
-		printf("(CACHE) - cache_research:	non trovato\n"); //DEBUG 
+		//printf("(CACHE) - cache_research:	non trovato\n"); //DEBUG 
 		return NULL;
 	}else{
-		printf("(CACHE) - cache_research:	trovato\n"); //DEBUG
+		//printf("(CACHE) - cache_research:	trovato\n"); //DEBUG
 		return node;
 	}
 }
@@ -86,7 +86,7 @@ void cache_capacity_update(int dim_file, int new_file_or_not)
       mutex_lock(&mtx, "cache: lock fallita in cache_capacity_update");
 	used_mem = used_mem + dim_file;
 	files_in_cache += new_file_or_not;
-	printf("(STATO CACHE) : cache used memory = %lu di %zu - files in cache = %zu\n", used_mem, cache_capacity, files_in_cache);
+	printf("(STATO CACHE) : 		used memory = %lu di %zu - n. files = %zu\n", used_mem, cache_capacity, files_in_cache);
 	mutex_unlock(&mtx, "cache: unlock fallita in cache_capacity_update");
 }
 void cache_dealloc(file** cache)
@@ -135,7 +135,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 			mutex_unlock(&mtx, "cache_removeFile: unlock fallita");
 			cache_capacity_update(-size, -1);
 			printf("(CACHE) - cache_removeFile: unico elemento eliminato\n"); //DEBUG
-			printf("(STAMPA CACHE) :"); //DEBUG
+			printf("(STAMPA CACHE) :		"); //DEBUG
 			print_queue(*cache); //DEBUG
 			return 0;
 		}else{
@@ -175,7 +175,7 @@ int cache_removeFile(file** cache, char* f_name, int id)
 		else aux->next = prev->next;
 		//aggiornamento capacità cache
 		cache_capacity_update(-(prev->f_size), -1);
-		printf("(STAMPA CACHE) :"); //DEBUG
+		printf("(STAMPA CACHE) :		"); //DEBUG
 		print_queue(*cache); //DEBUG
 		pthread_mutex_destroy(&prev->mtx);
 		free(prev);
@@ -188,8 +188,8 @@ int cache_removeFile(file** cache, char* f_name, int id)
 				free(curr);
 				//aggiornamento capacità cache
 				cache_capacity_update(-(curr->f_size), -1);
-				printf("(STAMPA CACHE) :");
-				print_queue(*cache);
+				printf("(STAMPA CACHE) :		"); //DEBUG
+				print_queue(*cache); //DEBUG
 				found = 1;
 		}
 	}
@@ -203,24 +203,16 @@ int cache_removeFile(file** cache, char* f_name, int id)
 int cache_insert(file** cache, char* f_name, char* f_data, size_t dim_f, int id, file** expelled_file)
 {	
       printf("(CACHE) - cache_insert: 	scrittura %s (%zu byte)... \n", f_name, dim_f);	 //DEBUG
-	/*
-      //CONTROLLO PRELIMINARE -> INUTILE i file qui arrivano sempre con dimensione 0
-	if (cache_capacity < dim_f){
-		LOG_ERR(-1, "cache_insert: dimensione file maggiore della capacità della cache");
-		return -1;
-      }
-	*/
 
-	file* file_ex = NULL;
-      //INSERIMENTO CON RIMPIAZZO -> gestire puntatore del file rimpiazzato -> è necessario controllare il numero di file poiche dim_f = 0
-      if (/*used_mem+dim_f > cache_capacity || */files_in_cache+1 > max_storage_file){
+      //INSERIMENTO CON RIMPIAZZO
+      if (files_in_cache+1 > max_storage_file){
 		printf("CACHE - cache_insert:		(!) rimpiazzo necessario (per num. max file)\n"); //DEBUG
-		if ((file_ex = replace_to_write(cache, f_name, f_data, dim_f, id)) == NULL){
+		if ((*expelled_file = replace_to_write(cache, f_name, f_data, dim_f, id)) == NULL){
 			printf("(CACHE) - cache_insert: 		scrittura in append su %s (%zubyte) fallita - rimpiazzo impossibile\n", f_name, dim_f); //DEBUG
 			return -1;
 		}else{
-			expelled_file = &(file_ex);
-			printf("(CACHE) - cache_insert: 	scrittura %s eseguita con rimpiazzo di %s\n",f_name, (file_ex)->f_name); //DEBUG
+			if(*expelled_file != NULL)
+				printf("(CACHE) - cache_insert: 	scrittura %s eseguita con rimpiazzo di %s\n",f_name, (*expelled_file)->f_name); //DEBUG
 			return 0;
 		}
 	}
@@ -232,8 +224,8 @@ int cache_insert(file** cache, char* f_name, char* f_data, size_t dim_f, int id,
 	}
 	printf("(CACHE) - cache_insert:		scrittura %s eseguita\n", f_name); //DEBUG
       cache_capacity_update(dim_f, 1);
-      printf("(STAMPA CACHE) :");
-	print_queue(*cache);
+      printf("(STAMPA CACHE) :	"); //DEBUG
+	print_queue(*cache);  //DEBUG
 	return 0;
 }
 int cache_enqueue(file** cache, char* f_name, char* f_data, size_t dim_f, int id)
@@ -307,7 +299,7 @@ int cache_enqueue(file** cache, char* f_name, char* f_data, size_t dim_f, int id
 file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, int id)
 {
 	printf("(CACHE) - replace_to_write: 	scrittura %s (%zu byte)... \n", f_name, dim_f); //DEBUG
-	printf("(STAMPA CACHE) : "); //DEBUG
+	printf("(STAMPA CACHE) :		"); //DEBUG
 	print_queue(*cache); //DEBUG
 	// CREAZIONE DEL NUOVO NODO
       file* new;
@@ -355,9 +347,9 @@ file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, i
 		file* aux = prev;
 
 		while (curr->next != NULL){ 
-			printf("nodo corrente: prev->f_name = %s | prev->f_lock = %d\n",prev->f_name, prev->f_lock);
+			//printf("nodo corrente: prev->f_name = %s | prev->f_lock = %d\n",prev->f_name, prev->f_lock); //DEBUG
 			if (prev->f_lock == 0 || prev->f_lock == id){
-				printf("nodo scelto per rimpiazzo: prev->f_name = %s\n",prev->f_name);
+				//printf("nodo scelto per rimpiazzo: prev->f_name = %s\n",prev->f_name); //DEBUG
 				found = 1;
 				break;
 			}
@@ -385,9 +377,9 @@ file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, i
 			prev->next = curr->next;
 			found = 1;
 		}
-		printf("(STAMPA CACHE) : "); //DEBUG
+		printf("(STAMPA CACHE) :		"); //DEBUG
 		print_queue(*cache);	//DEBUG
-		printf("BUG HERE?\n");	//DEBUG
+		
 		//printf("FILE DA RIMPIAZZARE = %s\n", rep->f_name);
 		mutex_unlock(&(prev->mtx), "replace_to_write: unlock fallita in replacement_algorithm");
 		mutex_unlock(&(curr->mtx), "replace_to_write: unlock fallita in replacement_algorithm");
@@ -416,8 +408,8 @@ file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, i
 
 	cache_capacity_update(-(rep->f_size), -1); //eliminato un file
 	//printf("(CACHE) - replace_to_write:	rimpiazzato il nodo: %s\n", rep->f_name);
-	printf("(STAMPA CACHE) : ");
-	print_queue(*cache);
+	printf("(STAMPA CACHE) :		"); //DEBUG
+	print_queue(*cache);  //DEBUG
 	
 	//AGGIORNAMENTO STATO CACHE
       cache_capacity_update(0, 1); //aggiunto un file vuoto
@@ -433,17 +425,16 @@ int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, i
 		LOG_ERR(EFBIG, "cache_appendToFile: "); //log errore per il server
 		return -1;
       }
-	file* file_ex = NULL;
 	printf("(CACHE) - cache_appendToFile:	su file_name:%s | size_file=%zu | id=%d\n", f_name, dim_f, id); //DEBUG
 	//controllo capacità memoria per rimpiazzo
 	if(used_mem+dim_f > cache_capacity){
 		printf("cache_appendToFile:	(!) rimpiazzo necessario\n");
-		if((file_ex = replace_to_append(cache, f_name, f_data, dim_f, id)) == NULL){
+		if((*expelled_file = replace_to_append(cache, f_name, f_data, dim_f, id)) == NULL){
 			printf("(CACHE) - cache_appendToFile: 		scrittura in append su %s (%zubyte) fallita - rimpiazzo impossibile\n", f_name, dim_f); //DEBUG
 			return -1;
 		}else{
-			expelled_file = &(file_ex);
-			printf("(CACHE) - cache_appendToFile:	append riuscita - file rimpiazzato: %s - scrittura avvenuta\n", (file_ex)->f_name); //DEBUG
+			if(*expelled_file != NULL)
+				printf("(CACHE) - cache_appendToFile:	append riuscita - file rimpiazzato: %s - scrittura avvenuta\n", (*expelled_file)->f_name); //DEBUG
 			return 0;
 		}
 	}
@@ -500,8 +491,8 @@ int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, i
 		mutex_unlock(&(node->mtx), "cache_appendToFile: lock fallita");
 		cache_capacity_update(dim_f, 0);
 		printf("(CACHE) - appendToFile: 	scrittura in append su %s eseguita senza rimpiazzo\n", node->f_name);
-		printf("(STAMPA CACHE) :");
-		print_queue(*cache);
+		printf("(STAMPA CACHE) :		");  //DEBUG
+		print_queue(*cache);  //DEBUG
 	}
 
 	if (found) return 0;
@@ -563,8 +554,8 @@ file* replace_to_append(file** cache, char* f_name, char* f_data, size_t dim_f, 
 	else{ 
 		printf("(CACHE) - replace_to_append:	rimpiazzato il nodo: %s\n", rep->f_name);
 		cache_capacity_update(-(rep->f_size), -1);
-		printf("(STAMPA CACHE) :");
-		print_queue(*cache);
+		printf("(STAMPA CACHE) :		");  //DEBUG
+		print_queue(*cache);  //DEBUG
 	}
       		
 	//////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -608,8 +599,8 @@ file* replace_to_append(file** cache, char* f_name, char* f_data, size_t dim_f, 
 		
 		printf("(CACHE) - replace_to_append:	append su %s eseguita\n", node->f_name);
 		cache_capacity_update(dim_f, 0);
-		printf("(STAMPA CACHE) :");
-		print_queue(*cache);
+		printf("(STAMPA CACHE) :		");  //DEBUG
+		print_queue(*cache);  //DEBUG
 	}
 	//in ogni caso il rimpiazzo è avvenuto
 	return rep;

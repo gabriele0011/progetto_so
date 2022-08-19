@@ -22,11 +22,9 @@ typedef struct _file
 	int f_lock;				//flag lock
 	byte f_open;			//file aperto
 	pthread_mutex_t mtx;		//mutex
-	node* id_list;			//lista di processi che hanno aperto il file (gli id vengono passati come stringe non interi)
+	node* id_list;			//lista dei processi che hanno aperto il file
 	struct _file* next;		//ptr nodo successivo
 }file;
-
-void insert(file** head, int id);
 
 //prototipi 
 void create_cache(int mem_size, int max_file_in_cache);

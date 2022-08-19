@@ -61,6 +61,8 @@ static void send_from_dir(const char* dirname, int* n)
 			if(strcmp(entry->d_name, ".DS_Store") != 0){ //TERMINALE MACOS
 			printf("(CLIENT) - case_write_w.send_from_dir: richieta di scrittura per %s (path_dir: %s)\n", entry->d_name, path_dir); //DEBUG
 			write_request(entry->d_name);
+			//write_request(path_dir);
+
 			(*n)--;
 			}//TERMINALE MACOS
 		}
@@ -76,22 +78,22 @@ static void write_request(char* f_name)
 	//openFile + writeFile
 	if ((err=openFile(f_name, (O_CREATE|O_LOCK)) == 0)){
 		if (writeFile(f_name, arg_d) == -1){
-			if(errno == ENOENT){	//se fallisce per ENOENT
-				removeFile(f_name);	//elimina il file vuoto creato con openFile
-				LOG_ERR(errno, "writeFile"); 
-			}
-		}else insert_node(&open_files_list, f_name);
+			if(errno == ENOENT) removeFile(f_name);	//elimina file vuoto creato con openFile
+			LOG_ERR(errno, "writeFile");
+		}else 
+			insert_node(&open_files_list, f_name);
 		return;
 	}else{
-		if(err == -1){ LOG_ERR(-1, "openFile: server error"); return; }	//crash della funzione nel server
+		if(err == -1){ LOG_ERR(-1, "openFile - server error"); return; }	//crash della funzione nel server
 		else LOG_ERR(errno, "openFile");	//caso in cui ritorna errno -> int>0
 	}
 
 	//openFile + appendToFile
 	if ((err=openFile(f_name, 0)) == 0){
-		if(append_request(f_name) == 0) insert_node(&open_files_list, f_name);
+		if(append_request(f_name) == 0) 
+			insert_node(&open_files_list, f_name);
 	}else{
-		if(err == -1){ LOG_ERR(-1, "openFile: server error"); }	//crash della funzione nel server
+		if(err == -1){ LOG_ERR(-1, "openFile - server error"); }	//crash della funzione nel server
 		else LOG_ERR(errno, "openFile");	//caso in cui ritorna errno -> int>0
 	}
 
@@ -581,8 +583,7 @@ int openFile(const char* pathname, int flag)
 	*buffer = 0;
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
 	
-	printf("RUT: %d\n", ret);
-	printf("(CLIENT) - openFile:		ESITO =  "); //DEBUG
+	printf("(CLIENT) - openFile:	ESITO =  "); //DEBUG
 	if(ret != 0) printf("FALLITA\n"); //DEBUG
 	else printf("SUCCESSO\n"); //DEBUG
 	
@@ -597,10 +598,11 @@ int openFile(const char* pathname, int flag)
 		len = 0;
 		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
 		len = *buffer;
-		//pathname
-		char path[++len];
+		//file name
+		char file_name[len];
 		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "openFile", of_clean);
-		path[len+1] = '\0';
+		strncpy(file_name, buffer, len);
+		file_name[len] = '\0';
 		//size data
 		size_t size_data;
 		ec_meno1_c(read(fd_sk, buffer, sizeof(char)*len), "openFile", of_clean);
@@ -610,8 +612,8 @@ int openFile(const char* pathname, int flag)
 		ec_meno1_c(read(fd_sk, data, sizeof(char)*size_data), "openFile", of_clean);
 		//scrittura file espluso nella directory arg_D
 		if(arg_D != NULL)
-			writefile_in_dir(path, size_data, data);
-		printf("(CLIENT) - openFile: 		file espluso = %s\n", pathname); //DEBUG
+			writefile_in_dir(file_name, size_data, data);
+		printf("(CLIENT) - openFile: 	file espluso ?= %s\n", file_name); //DEBUG
 	}
 	
 	if(buffer) free(buffer);
@@ -634,27 +636,21 @@ int writeFile(const char* pathname, char* dirname)
 
 	//APERTURA E LETTURA FILE
 	int fd;
-	//casi possibili
-	if (path_dir != NULL){  //caso 1 -w file1,file2...
-		if ((fd = open(path_dir, O_RDONLY) == -1)){ goto wf_clean; }
-	}else{ //caso 2 -w dirname
-		if((fd = open(pathname, O_RDONLY)) == -1){ goto wf_clean; }
-	}
-	//struttura per info file
 	struct stat path_stat;
-	if (path_dir != NULL){ 
+	//casi possibili
+	//printf("path_dir: %s - pathname: %s\n", path_dir, pathname); //DEBUG
+	if (path_dir != NULL){	//caso 1 -w file1,file2...
+		if ((fd = open(path_dir, O_RDONLY)) == -1){ goto wf_clean; }
 		if (lstat(path_dir, &path_stat) == -1){ goto wf_clean; }
-	}else{ 
+	}else{	//caso 2 -w dirname
+		if((fd = open(pathname, O_RDONLY)) == -1){ goto wf_clean; }
 		if (lstat(pathname, &path_stat) == -1){ goto wf_clean; }
 	}
-
     	//allocazione buf[size] per la dimensione del file in byte
     	size_t file_size = path_stat.st_size;
- 	ec_null_c((data_file = (char*)calloc(file_size, sizeof(char))) , "writeFile: calloc fallita", wf_clean);
- 	
+ 	ec_null_c((data_file = (char*)calloc(file_size, sizeof(char))) , "writeFile: calloc fallita", wf_clean)
 	//lettura file + scrittura del buf
- 	ec_meno1_c(read(fd, data_file, file_size), "writeFile: read fallita", wf_clean);
-	//printf("BUG HERE?\n");
+ 	ec_meno1_c(read(fd, data_file, sizeof(char)*file_size), "writeFile: read fallita", wf_clean); //BUG QUI
  	ec_meno1_c(close(fd), "writeFile: close fallita", wf_clean);
 	path_dir = NULL;
 	
@@ -735,7 +731,6 @@ int writeFile(const char* pathname, char* dirname)
 	//legge 1 se c'è un file espluso, 0 altrimenti
 	*buffer = 0;
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
-	//printf("(CLIENT) - openFile:	file espulso = %d\n", *buf);
 	
 	if(*buffer == 1){
 		//len pathname
