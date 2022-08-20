@@ -12,7 +12,7 @@ static void case_write_W (char* arg_W)
 	char* save = NULL;
 	char* token = strtok_r(arg_W, ",", &save);
 	while (token){
-		printf("(CLIENT) - case_write_W:	richiesta di scrittura del file %s\n", token); //DEBUG
+		//printf("(CLIENT) - case_write_W:	richiesta di scrittura del file %s\n", token); //DEBUG
 		write_request(token);
 		token = strtok_r(NULL, ",", &save);
 	}
@@ -59,10 +59,9 @@ static void send_from_dir(const char* dirname, int* n)
 		}else{
 			path_dir = path;
 			if(strcmp(entry->d_name, ".DS_Store") != 0){ //TERMINALE MACOS
-			printf("(CLIENT) - case_write_w.send_from_dir: richieta di scrittura per %s (path_dir: %s)\n", entry->d_name, path_dir); //DEBUG
+			printf("(CLIENT) - send_from_dir: richieta di scrittura per %s (path_dir: %s)\n", entry->d_name, path_dir); //DEBUG
 			write_request(entry->d_name);
 			//write_request(path_dir);
-
 			(*n)--;
 			}//TERMINALE MACOS
 		}
@@ -105,6 +104,7 @@ static int append_request(const char* f_name)
 	printf("(CLIENT) - append_request\n"); //DEBUG
 	//apertura del file
 	int fd;
+    	char* buf = NULL;
 	if (path_dir != NULL){ 
 		ec_meno1_c((fd = open(path_dir, O_RDONLY)), "open in append_request", ar_clean);
 	}else{ 
@@ -113,13 +113,12 @@ static int append_request(const char* f_name)
 	//stat per ricavare dimensione file
 	struct stat path_stat;
 	if (path_dir != NULL){ 
-		ec_meno1_c(lstat(path_dir, &path_stat) , "lstat in append_request", ar_clean);
+		ec_meno1_c(lstat(path_dir, &path_stat), "lstat in append_request", ar_clean);
 	}else{
-		ec_meno1_c(lstat(f_name, &path_stat) , "lstat in append_request", ar_clean);
+		ec_meno1_c(lstat(f_name, &path_stat), "lstat in append_request", ar_clean);
 	}
     	//allocazione buf[size]
     	size_t file_size = path_stat.st_size;
-    	char* buf = NULL;
  	ec_null_c((buf = calloc(file_size, sizeof(char))) , "append_request", ar_clean);
 
  	//lettura file + scrittura del buf
@@ -145,25 +144,25 @@ static int append_request(const char* f_name)
 //scrittura di un file in una directory specificata in pathname
 static void writefile_in_dir(char* pathname, size_t size_file, char* data)
 {
+	//printf("(CLIENT) - writefile_in_dir in dir:%s su p: %s size=%zu data:/\n",arg_D, pathname, size_file); // DEBUG
 	//passo 1: apertura directory dirname
 	DIR* d;
-	if ((d = opendir(arg_d)) == NULL){ LOG_ERR(errno, "opendir in writefile_in_dir"); return; }
-	printf("dir '%s' aperta\n", arg_d);
+	if ((d = opendir(arg_D)) == NULL){ LOG_ERR(errno, "opendir in writefile_in_dir"); return; }
 
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/%s", arg_d, pathname);
+	snprintf(path, sizeof(path), "%s/%s", arg_D, pathname);
 	//printf("path: %s\n", path); //DEBUG
 
 	//crea nuovo file in directory e scrivi
 	FILE* ifp;
 	if ( (ifp = fopen(path, "wr")) == NULL){ LOG_ERR(errno, "fopen in writefile_in_dir"); return; }
 	if (fwrite( data, sizeof(char), size_file, ifp) == -1){
-		LOG_ERR(errno, "writefile_in_dir: scrittura fallita");
-		return;
+		LOG_ERR(errno, "writefile_in_dir fallita");
+		//return;
 	}
 	if (fclose(ifp) == -1){ LOG_ERR(errno, "fclose in writefile_in_dir"); return; }
 	if (closedir(d) == -1){ LOG_ERR(errno, "closedir in writefile_in_dir"); return; }
-	printf("writefile_in_dir: scrittura di %s avvenuta in %s\n", pathname, arg_d); //DEBUG
+	printf("(CLIENT) - writefile_in_dir: scrittura file espulso %s avvenuta in %s\n", pathname, arg_D); //DEBUG
 }
 
 //read
@@ -521,10 +520,6 @@ int openFile(const char* pathname, int flag)
 {
       //protocollo: C/1(invio dato) -> S/2(ricezione dato) -> S/3 (invio conferma ric. dato) -> C/4(ric. conf. ric dato)
 	printf("(CLIENT) - openFile: su %s - %s\n", pathname, path_dir); //DEBUG
-
-	int len;
-	int id;
-	int ret;
 	int* buffer;
 	ec_null_c((buffer = malloc(sizeof(int))), "openFile", of_clean);
 	*buffer = 0;
@@ -535,26 +530,26 @@ int openFile(const char* pathname, int flag)
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
       //riceve: conferma accettazione richiesta
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
-	if(*buffer != 0){ errno = ENOMSG; goto of_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto of_clean; }
 
       // comunicazione stabilita OK
       // invio dati richiesta al server
       
       //LEN PATHNAME
 	//comunica: lunghezza pathname
-	len = strlen(pathname);
+	int len = strlen(pathname);
 	*buffer = len;
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
       //7 riceve: conferma ricezione pathname
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
-	if(*buffer != 0){ errno = ENOMSG; goto of_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto of_clean; }
 
 	//PATHANAME
 	//comunica: pathname
 	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "openFile", of_clean);
 	//11 riceve: conferma ricezione pathname
       ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
-	if(*buffer != 0){ errno = ENOMSG; goto of_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto of_clean; }
 
       //FLAGS
       //comunica: flags
@@ -562,23 +557,23 @@ int openFile(const char* pathname, int flag)
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
 	//riceve: conferma ricezione flags
       ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
-	if(*buffer != 0){ errno = ENOMSG; goto of_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto of_clean; }
 
       //IDENTIFICAZIONE PROCESSO
-      id = getpid();
+      int id = getpid();
       //comunica: pid
       *buffer = id;
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
       //riceve: conferma ricezione pid
       ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
-	if(*buffer != 0){ errno = ENOMSG; goto of_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto of_clean; }
 
 	//dati inviati al server
 	
 	//RICEZIONE ESITO OPENFILE
 	//riceve: esito openFile
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
-	ret = *buffer;
+	int ret = *buffer;
 	//comunica: esito ricevuto
 	*buffer = 0;
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "openFile", of_clean);
@@ -613,7 +608,7 @@ int openFile(const char* pathname, int flag)
 		//scrittura file espluso nella directory arg_D
 		if(arg_D != NULL)
 			writefile_in_dir(file_name, size_data, data);
-		printf("(CLIENT) - openFile: 	file espluso ?= %s\n", file_name); //DEBUG
+		printf("(CLIENT) - openFile: 	file espluso = %s\n", file_name); //DEBUG
 	}
 	
 	if(buffer) free(buffer);
@@ -662,7 +657,7 @@ int writeFile(const char* pathname, char* dirname)
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma accettazione richiesta
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
-	if(*buffer != 0){ goto wf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto wf_clean; }
 
       // comunicazione stabilita OK
       // invio dati richiesta al server 
@@ -674,7 +669,7 @@ int writeFile(const char* pathname, char* dirname)
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pathname
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
-	if(*buffer != 0){ goto wf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto wf_clean; }
 
 	//PATHANAME
 	//comunica: pathname
@@ -690,7 +685,7 @@ int writeFile(const char* pathname, char* dirname)
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pathname
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read 2 fallita", wf_clean);
-	if(*buffer != 0){ goto wf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto wf_clean; }
 	//printf("writeFile: file_size OK\n"); //DEBUG
 
 	//DATA FILE
@@ -698,7 +693,7 @@ int writeFile(const char* pathname, char* dirname)
 	ec_meno1_c(write(fd_sk, data_file, sizeof(char)*file_size), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pathname
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
-	if(*buffer != 0){ goto wf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto wf_clean; }
 	//printf("writeFile: data file OK\n"); //DEBUG
 
       //IDENTIFICAZIONE PROCESSO
@@ -708,7 +703,7 @@ int writeFile(const char* pathname, char* dirname)
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "writeFile: write fallita", wf_clean);
       //riceve: conferma ricezione pid
       ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
-	if(*buffer != 0){ goto wf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto wf_clean; }
 
 	//dati inviati al server
 	//printf("op_data_receive: %d / %s / flags / %d\n", len, pathname, id); //DEBUG
@@ -749,8 +744,8 @@ int writeFile(const char* pathname, char* dirname)
 		size_data = *buffer;
 		
 		//data
-		char *arr_data = NULL;
-		ec_null_c((arr_data = (char*)calloc(sizeof(char), size_data)), "writeFile: calloc fallita", wf_clean);
+		char arr_data[size_data];
+		//ec_null_c((arr_data = (char*)calloc(sizeof(char), size_data)), "writeFile: calloc fallita", wf_clean);
 		ec_meno1_c(read(fd_sk, arr_data, sizeof(char)*size_data), "writeFile: read fallita", wf_clean);
 		
 		//scrittura file espluso nella directory arg_D
@@ -785,7 +780,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //3 riceve: conferma accettazione richiesta openFile (1)
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
-	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida") goto atf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto atf_clean; }
 
       // comunicazione stabilita
       // invio dati richiesta al server 
@@ -797,7 +792,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione pathname
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
-	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto atf_clean; }
 
 
 	//PATHANAME
@@ -805,7 +800,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	ec_meno1_c(write(fd_sk, pathname, sizeof(char)*len), "appendToFile: write fallita", atf_clean);
 	//11 riceve: conferma ricezione pathname
       ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
-	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto atf_clean; }
 
 
 	//DIMENSIONE DEL FILE
@@ -814,7 +809,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione file size
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
-	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto atf_clean; }
 
 
 	//DATA FILE
@@ -822,7 +817,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	ec_meno1_c(write(fd_sk, (char*)buf, sizeof(char)*size), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione data file
 	ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
-	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto atf_clean; }
 
 
       //IDENTIFICAZIONE PROCESSO
@@ -832,7 +827,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
       //riceve: conferma ricezione pid
       ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
-	if(*buffer != 0){ LOG_ERR(-1, "appendToFile: read non valida"); goto atf_clean; }
+	if(*buffer != 0){ /*errno = EBADE;*/ goto atf_clean; }
 
 	
 	//printf("op_data_receive: %d / %s / flags / %d\n", len, pathname, id); //DEBUG

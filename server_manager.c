@@ -785,7 +785,7 @@ static int worker_appendToFile(int fd_c)
 
 
 	//ELABORAZIONE
-	ret = cache_appendToFile(&cache, pathname, data, file_size, id, file_expelled);
+	ret = cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled);
 	
 	//INVIO ESITO APPEND TO FILE
 	//comunica: esito
