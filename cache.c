@@ -240,9 +240,9 @@ int cache_enqueue(file** cache, char* f_name, char* f_data, size_t dim_f, int id
 	new->f_size = dim_f;
 	//len pathname + pathname
 	size_t len_f_name = strlen(f_name);
-	ec_null_r((new->f_name = calloc(sizeof(char), len_f_name+1)), "cache_enqueue: calloc fallita", -1);
-	new->f_name[len_f_name+1] = '\0';
+	ec_null_r((new->f_name = calloc(sizeof(char), len_f_name)), "cache_enqueue: calloc fallita", -1);
 	strncpy(new->f_name, f_name, len_f_name);
+	printf("enqueue DEBUG DEBUG DEBUG %s - %s - %zu\n", f_name, new->f_name, len_f_name);
 	//permessi di scrittura/lettura
 	new->f_read = 1;
 	new->f_write = 1;
@@ -324,6 +324,7 @@ file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, i
       size_t len_f_name = strlen(f_name);
 	ec_null_r((new->f_name = calloc(sizeof(char), len_f_name)), "calloc in replace_to_write", NULL); 
 	strncpy(new->f_name, f_name, len_f_name);
+	printf("replace DEBUG DEBUG DEBUG %s - %s - %zu\n", f_name, new->f_name, len_f_name);
 
 	file* rep = NULL;
 	int found = 0;
