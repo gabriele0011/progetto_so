@@ -50,7 +50,7 @@ int read_config_file(char* f_name)
 		}
 		//quarta e ultima acquisizione non ha '\n'
 		if (strncmp(token1, "socket_file_name", len_t) == 0 ){
-			int len_token2 = strlen(token2);
+			size_t len_token2 = strlen(token2);
 			ec_null_r((socket_name = calloc(sizeof(char), len_token2)), "read_config_file", -1);
 			strncpy(socket_name, token2, len_token2);
 			//socket_file_name[len_string] = '\0';
@@ -470,14 +470,14 @@ static int worker_openFile(int fd_c)
 
 	//dati ricevuti 
 
-	printf("(SERVER) - openFile:		INIZIO - file_name:%s | id=%d | flag:", pathname, id); //DEBUG
+	printf("(SERVER) - openFile:		INIZIO - f_name:%s | len_p=%zu| id=%d | flag:", pathname, strlen(pathname), id); //DEBUG
 	if (flag==(O_CREATE|O_LOCK)) printf("O_CREATE|O_LOCK\n"); //DEBUG
 	if (flag==O_LOCK) printf("O_LOCK\n"); //DEBUG
 	if (flag == 0) printf("/\n"); //DEBUG
 	
-	////////////////////////
-	//ELABORAZIONE RICHIESTA
-	////////////////////////
+	/////////////////////////////
+	// ELABORAZIONE RICHIESTA //
+	///////////////////////////
 
 	file* f = NULL;
 	file* file_expelled = NULL;
@@ -561,8 +561,8 @@ static int worker_openFile(int fd_c)
 		ec_meno1_c(write(fd_c, file_expelled->f_data, sizeof(char)*(file_expelled->f_size)), "write in openFile", of_clean);
 		
 		//rimozione del nodo rimpiazzato dalla cache
+		printf("(SERVER) - openFile:		file espulso (apth:%s -len_path=%zu- size=%zu) inviato\n", file_expelled->f_name, len_path, file_expelled->f_size); //DEBUG
 		if(file_expelled != NULL) free(file_expelled);
-		//printf("(SERVER) - openFile:		file espulso (%s-%d-%zu) inviato\n", file_expelled->f_name, len, file_expelled->f_size); //DEBUG
 	}
 
 	if(buf) free(buf);
@@ -617,7 +617,7 @@ static int worker_writeFile(int fd_c)
 
 	//DIMENSIONE DEL FILE
 	size_t file_size;
-	//riceve: lunghezza del pathname
+	//riceve: dimensione file
 	ec_meno1_c(read(fd_c, buf, sizeof(int)), "read in writeFile", wf_clean);
 	file_size = *buf;
 	//risponde: ricevuta
@@ -642,7 +642,7 @@ static int worker_writeFile(int fd_c)
 	ec_meno1_c(write(fd_c, buf, sizeof(int)), "write in writeFile", wf_clean);
 
 	//dati ricevuti
-	printf("(SERVER) - writeFile:		INIZIO - file_name:%s | file_size=%zu | id=%d \n", pathname, file_size, id); //DEBUG
+	printf("(SERVER) - writeFile:		su file_name:%s | file_size=%zu | id=%d \n", pathname, file_size, id); //DEBUG
 
 
 	////////////////////////////
@@ -691,10 +691,12 @@ static int worker_writeFile(int fd_c)
 		//PATHANAME
 		ec_meno1_c(write(fd_c, file_expelled->f_name, len_path*sizeof(char)), "writeFile: write fallita", wf_clean);
 		//SIZE DATA
-		ec_meno1_c(write(fd_c, &(file_expelled->f_size), sizeof(size_t)), "writeFile: write fallita XXX", wf_clean);
+		ec_meno1_c(write(fd_c, &(file_expelled->f_size), sizeof(int)), "writeFile: write fallita XXX", wf_clean);
 		//DATA
 		ec_meno1_c(write(fd_c, file_expelled->f_data, sizeof(char)*(file_expelled->f_size)), "openFile: write fallita", wf_clean);
-		cache_removeFile(&cache, file_expelled->f_name, id);
+		printf("(SERVER) - openFile:		file espulso (apth:%s -len_path=%zu- size=%zu) inviato\n", file_expelled->f_name, len_path, file_expelled->f_size); //DEBUG
+		if(file_expelled != NULL) free(file_expelled);
+
 	}
 
 	if(buf) free(buf);
@@ -752,7 +754,7 @@ static int worker_appendToFile(int fd_c)
 
 
 	//DIMENSIONE DEL FILE
-	int file_size;
+	size_t file_size;
 	//riceve: lunghezza del pathname
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 	file_size = *buffer;
@@ -780,7 +782,7 @@ static int worker_appendToFile(int fd_c)
 
 
 	//dati ricevuti
-	printf("(SERVER) - appendToFile:	INIZIO - file_name:%s | file_size=%d | id=%d \n", pathname, file_size, id); //DEBUG
+	printf("(SERVER) - appendToFile:	INIZIO - file_name:%s - file_size=%zu\n", pathname, file_size); //DEBUG
 
 
 	//ELABORAZIONE
@@ -809,15 +811,16 @@ static int worker_appendToFile(int fd_c)
 		//LEN PATHNAME
 		size_t len_path = strlen(file_expelled->f_name);
 		*buffer = len_path;
-		ec_meno1_c(write(fd_c, buffer, sizeof(size_t)), "appendToFile: write fallita", atf_clean);
+		ec_meno1_c(write(fd_c, buffer, sizeof(int)), "appendToFile: write fallita", atf_clean);
 		//PATHANAME
 		ec_meno1_c(write(fd_c, file_expelled->f_name, len_path*sizeof(char)), "appendToFile: write fallita", atf_clean);
 		//SIZE DATA
-		ec_meno1_c(write(fd_c, &(file_expelled->f_size), sizeof(size_t)), "appendToFile: write fallita", atf_clean); 
+		printf("BUG HERE ?? SIZE DATA = %zu\n", file_expelled->f_size);
+		ec_meno1_c(write(fd_c, &(file_expelled->f_size), sizeof(int)), "appendToFile: write fallita", atf_clean); 
 		//DATA
 		ec_meno1_c(write(fd_c, file_expelled->f_data, sizeof(char)*(file_expelled->f_size)), "openFile: write fallita", atf_clean);
-		
-		cache_removeFile(&cache, file_expelled->f_name, id);
+		printf("(SERVER) - openFile:		file espulso (apth:%s -len_path=%zu - size=%zu) inviato\n", file_expelled->f_name, len_path, file_expelled->f_size); //DEBUG
+		if(file_expelled != NULL) free(file_expelled);
 	}
 
 	if(buffer) free(buffer);
@@ -1133,7 +1136,6 @@ static int worker_unlockFile(int fd_c)
 	int* buffer;
    	ec_null_c( (buffer = (int*)malloc(sizeof(int))), "unlockFile: malloc fallita", uf_clean);
 	*buffer = 0;
-	int len;
 	int ret;
 
 	//1 -> la prima read viene effettuata nella thread_func
@@ -1143,12 +1145,11 @@ static int worker_unlockFile(int fd_c)
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
 
-
 	// comunicazione stabilita OK
 	// acquisizione dati richiesta dal client:
 
-
 	//LEN PATHNAME
+	size_t len;
 	//(riceve): lunghezza del pathname
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
 	len = *buffer;
@@ -1169,10 +1170,10 @@ static int worker_unlockFile(int fd_c)
 
 
 	//IDENTIFICAZIONE PROCESSO CLIENT
-	//17 (riceve): pid
+	//riceve: pid
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
 	int id = *buffer;
-	//(comunica): recevuto
+	//comunica: recevuto
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
 
@@ -1181,18 +1182,20 @@ static int worker_unlockFile(int fd_c)
 	ret = cache_unlockFile(cache, pathname, id);
 
 	//ESITO
-	//(comunica): esito
+	//comunica: esito
 	*buffer = ret;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
-	//(riceve): conferma ricezione
+	//riceve: conferma ricezione esito
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
 	if (*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto uf_clean; }
 
 	if(buffer) free(buffer);
+	if(pathname) free(pathname);
 	return 0;
 
 	uf_clean:
 	if(buffer) free(buffer);
+	if(pathname) free(pathname);
 	return -1;
 }
 

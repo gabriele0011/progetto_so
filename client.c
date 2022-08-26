@@ -13,29 +13,38 @@ static void case_write_W (char* arg_W)
 	char* token = strtok_r(arg_W, ",", &save);
 	while (token){
 		//printf("(CLIENT) - case_write_W:	richiesta di scrittura del file %s\n", token); //DEBUG
-		write_request(token);
+		size_t len_path = strlen(token);
+		char string[len_path];
+		strncpy(string, token, len_path);
+		string[len_path] = '\0';
+		write_request(string);
 		token = strtok_r(NULL, ",", &save);
 	}
 	return;
 }
 static void case_write_w(char* arg_w)
-{
-		char* dirname; //in seguito qui salvo la dir estratta da arg_w
-		//verifica arg. opzionale (n>0 || n=0 || n = NULL)
-		char* n = NULL;
-		int N;			
-		strtok_r(arg_w, ",", &n); //restituisce ind. primo token dopo il primo delimitatore
-		if (n == NULL){
-			N = -1;
+{	
+		char* dir;
+		char* token;
+		token = strtok(arg_w, ",");
+		
+		if(token != NULL){
+			size_t len_dir = strlen(token);
+			dir = calloc(sizeof(char), len_dir);
+			strncpy(dir, token, len_dir); 
+			dir[len_dir] = '\0';
+		}else return;
+
+		token = strtok(NULL, ",");
+		int N;
+		if(token != NULL){
+			if ( (N = is_number(token)) == -1 || N < 0){ LOG_ERR(EINVAL, "case_write_w: arg. -w non valido\n"); return; }
+			if(N == 0) N = -1;	
 		}else{
-			//controllo che sia un intero positivo
-			if ( (N = is_number(n)) == -1 || N < 0){ LOG_ERR(EINVAL, "case_write_w: arg. -w non valido\n"); return; }	
-			//se uguale a zero come non fosse presente -> x = -1
-			if (N == 0) N = -1;
+			N = -1;
 		}
-		dirname = strtok(arg_w, ",");
-		//printf("DEBUG - case_write_w con paramentri: dir:%s n=%d\n", dirname, N); //DEBUG
-		send_from_dir(dirname, &N);
+		//printf("DEBUG - case_write_w con paramentri: dir:%s n=%d\n", dir, N); //DEBUG
+		send_from_dir(dir, &N);
 		return;
 }
 static void send_from_dir(const char* dirname, int* n)
@@ -47,11 +56,10 @@ static void send_from_dir(const char* dirname, int* n)
 	//passo 2: lettura della directory
 	struct dirent* entry;
 	while (errno == 0 && ((entry = readdir(d)) != NULL) && *n != 0) {
+		
 		//passo 3 : aggiornamento path
 		char path[PATH_MAX];
-		snprintf(path, sizeof(path), "%s/%s", dirname, entry->d_name);
-		int len_path = strlen(path);
-		path[len_path] = '\0';
+		snprintf(path, sizeof(path) , "%s/%s", dirname, entry->d_name);
 		//passo 4 caso 1: controlla che se si tratti di una dir
 		if (is_directory(path)){	
 			//controlla che non si tratti della dir . oppure ..
@@ -62,9 +70,13 @@ static void send_from_dir(const char* dirname, int* n)
 		}else{
 			path_dir = path; //setta variabile globale
 			if(strcmp(entry->d_name, ".DS_Store") != 0){ //TERMINALE MACOS
-				printf("(CLIENT) - send_from_dir:	su %s\n", path); //DEBUG
-				//write_request(entry->d_name);
-				write_request(path);
+				size_t len_path = strlen(path);
+				char string[len_path]; //si potrebbe direttamente usare path
+				strncpy(string, path, len_path);
+				string[len_path] = '\0';
+				//printf("DEBUG send_from_dir - len_path=%zu - path:%s - string: %s\n", len_path, path, string);
+				//write_request
+				write_request(string);
 				errno = 0;
 				(*n)--;
 			}//TERMINALE MACOS
@@ -150,7 +162,7 @@ static int append_request(const char* f_name)
 //scrittura di un file in una directory specificata in pathname
 static void writefile_in_dir(char* pathname, size_t size_file, char* data)
 {
-	//(1) modificare chiamare da fopen a open
+	//(1) modificare chiamate da fopen a open
 	printf("(CLIENT) - writefile_in_dir in dir:	su path: %s size= %zu\n", pathname, size_file); // DEBUG
 	// apertura directory dirname
 	printf("\n");
@@ -158,10 +170,11 @@ static void writefile_in_dir(char* pathname, size_t size_file, char* data)
 	if ((d = opendir(arg_D)) == NULL){ LOG_ERR(errno, "opendir in writefile_in_dir"); return; }
 
 	ec_meno1_v(chdir(arg_D), "chdir in writefile_in_dir");
-	//copia di pathname x tokenizzare
+	//copia di pathname per tokenizzare
 	size_t len_path = strlen(pathname);
 	char path[len_path];
 	strncpy(path, pathname, len_path);
+	path[len_path] = '\0';
 
 	//tokenizzazione path + riproduzione percorso
 	char* token = strtok(path, "/");
@@ -217,10 +230,14 @@ static void read_request (char* arg_r)
 		//su ogni toker che rappresenta il nome del file invio una richiesta di lettura
 		void **buf = NULL;
 		size_t* size = NULL;
-		if(openFile(token, 0) != -1){
-			if(readFile(token, buf, size) == -1)
+		size_t len = strlen(token);
+		char f_name[len];
+		strncpy(f_name, token, len);
+		f_name[len] = '\0';
+		if(openFile(f_name, 0) != -1){
+			if(readFile(f_name, buf, size) == -1)
 				LOG_ERR(errno, "readFile: lettura impossibile");
-			insert_node(&open_files_list, token);
+			insert_node(&open_files_list, f_name);
 		}else{
 			LOG_ERR(errno, "openFile:");
 		}
@@ -234,7 +251,11 @@ static void lock_request(char* arg_l)
 	char* token = strtok_r(arg_l, ",", &save);
 	while (token){
 		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
-		printf("richiesta di lock su: %s\n", token);
+		size_t len = strlen(token);
+		char f_name[len];
+		strncpy(f_name, token, len);
+		f_name[len] = '\0';
+		printf("richiesta di lock su: %s\n", f_name);
 		if(openFile(token, 0) != -1){
 			if (lockFile(token) == -1){
 				LOG_ERR(errno, "lockFile:");
@@ -251,8 +272,12 @@ static void unlock_request(char* arg_u)
 	char* save = NULL;
 	char* token = strtok_r(arg_u, ",", &save);
 	while (token){
-		printf("richiesta di unlock su: %s\n", token);
-		if ( unlockFile(token) == -1){ LOG_ERR(errno, "unlockFile"); }
+		size_t len = strlen(token);
+		char f_name[len];
+		strncpy(f_name, token, len);
+		f_name[len] = '\0';
+		printf("richiesta di unlock su: %s\n", f_name);
+		if ( unlockFile(f_name) == -1){ LOG_ERR(errno, "unlockFile"); }
 		token = strtok_r(NULL, ",", &save);
 	}
 }
@@ -260,18 +285,21 @@ static void unlock_request(char* arg_u)
 static void remove_request(char* arg_c)
 {
 	//setta errno
-	char* save = NULL;
-	char* token = strtok_r(arg_c, ",", &save);
-	while (token){
+	char* token = strtok(arg_c, ",");
+	while (token != NULL){
 		//su ogni token che rappresenta il nome del file invio una richiesta di lock sul file
 		printf("richiesta di cancellazione su: %s\n", token);
 		if(openFile(token, 0) != -1){
-			if (removeFile(token) == -1){ LOG_ERR(errno, "removeFile");}
-			else{ insert_node(&open_files_list, token);}
+			size_t len_path = strlen(token);
+			char string[len_path];
+			strncpy(string, token, len_path);
+			string[len_path] = '\0';
+			if (removeFile(string) == -1){ LOG_ERR(errno, "removeFile");}
+			else{ insert_node(&open_files_list, string);}
 		}else{
 			LOG_ERR(errno, "openFile:");
 		}
-		token = strtok_r(NULL, ",", &save);
+		token = strtok(NULL, ",");
 	}
 }
 //routine chiusura file aperti
@@ -636,20 +664,20 @@ int openFile(const char* pathname, int flag)
 		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "read 8 in openFile", of_clean);
 		len_path = *buffer;
 		//file name
-		char file_name[len_path];
-		ec_meno1_c(read(fd_sk, file_name, sizeof(char)*len_path), "read 9 in openFile", of_clean);
-		file_name[len_path] = '\0';
+		char path[len_path];
+		ec_meno1_c(read(fd_sk, path, sizeof(char)*len_path), "read 9 in openFile", of_clean);
+		path[len_path] = '\0'; //inutile
 		//size data
 		size_t size_data;
 		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "read 10 in openFile", of_clean);
 		size_data = *buffer;
 		//data
-		char data[size_data];
-		ec_meno1_c(read(fd_sk, data, sizeof(char)*size_data), "read 11 in openFile", of_clean);
+		char arr_data[size_data];
+		ec_meno1_c(read(fd_sk, arr_data, sizeof(char)*size_data), "read 11 in openFile", of_clean);
 		//scrittura file espluso nella directory arg_D
-		//printf("(CLIENT) - openFile: 	file espluso:%s (b=%d) - len=%zu - size_data:%zu\n", file_name, b, len_path, size_data); //DEBUG
+		printf("(CLIENT) - openFile: 	file espluso:%s - len=%zu - size_data: %zu\n", path, len_path, size_data); //DEBUG
 		if(arg_D != NULL)
-			writefile_in_dir(file_name, size_data, data);
+			writefile_in_dir(path, size_data, arr_data);
 	}
 	
 	if(buffer) free(buffer);
@@ -664,7 +692,7 @@ int openFile(const char* pathname, int flag)
 //WRITE FILE 2
 int writeFile(const char* pathname, char* dirname)
 {
-	//printf("(CLIENT) - writeFile:		su: %s\n", pathname); //DEBUG
+	printf("(CLIENT) - writeFile:		su: %s\n", pathname); //DEBUG
 	char* data_file = NULL;
 	int* buffer;
 	ec_null_c( (buffer = malloc(sizeof(int))), "writeFile: malloc fallita", wf_clean);
@@ -741,7 +769,7 @@ int writeFile(const char* pathname, char* dirname)
 	if(*buffer != 0){ /*errno = EBADE;*/ goto wf_clean; }
 
 	//dati inviati al server
-	//printf("op_data_receive: %d / %s / flags / %d\n", len, pathname, id); //DEBUG
+	//printf("DEBUG writeFile operation data pathname: %s - len_p=%zu - file_size: %zu\n", pathname, len, file_size); //DEBUG
 	///////////////////////////////////////////////////////////////////////////////
 	
 	//RICEZIONE ESITO WRITE FILE 
@@ -765,7 +793,7 @@ int writeFile(const char* pathname, char* dirname)
 	if(*buffer == 1){
 		//len pathname
 		size_t len_path;
-		ec_meno1_c(read(fd_sk, buffer, sizeof(size_t)), "writeFile: read fallita", wf_clean);
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "writeFile: read fallita", wf_clean);
 		len_path = *buffer;
 		
 		//pathname
@@ -783,6 +811,7 @@ int writeFile(const char* pathname, char* dirname)
 		//ec_null_c((arr_data = (char*)calloc(sizeof(char), size_data)), "writeFile: calloc fallita", wf_clean);
 		ec_meno1_c(read(fd_sk, arr_data, sizeof(char)*size_data), "writeFile: read fallita", wf_clean);
 		
+		printf("(CLIENT) - writeFile: 	file espluso:%s - len=%zu - size_data: %zu\n", path, len_path, size_data); //DEBUG
 		//scrittura file espluso nella directory arg_D
 		if(dirname != NULL)
 			writefile_in_dir(path, size_data, arr_data);
@@ -804,7 +833,6 @@ int writeFile(const char* pathname, char* dirname)
 int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname)
 {
 	//printf("(CLIENT) - appendToFile: su: %s\n", pathname);
-	char* arr_data = NULL;
 	int* buffer;
 	ec_null_c( (buffer = malloc(sizeof(int))), "appendToFile: malloc fallita", atf_clean);
 	*buffer = 0;
@@ -901,13 +929,14 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 		
 		//size data
 		size_t size_data;
-		ec_meno1_c(read(fd_sk, buffer, sizeof(size_t)), "appendToFile: read fallita", atf_clean);
+		ec_meno1_c(read(fd_sk, buffer, sizeof(int)), "appendToFile: read fallita", atf_clean);
 		size_data = *buffer;
 		
 		//data
-		ec_null_c((arr_data = (char*)calloc(sizeof(char), size_data)), "appendToFile: calloc fallita", atf_clean);
+		char arr_data[size_data];
 		ec_meno1_c(read(fd_sk, arr_data, sizeof(char)*size_data), "appendToFile: read fallita", atf_clean);
 		
+		printf("(CLIENT) - appendToFile: 	file espluso:%s - len_p=%zu - size_data: %zu\n", path, len_path, size_data); //DEBUG
 		//scrittura file espluso nella directory arg_D
 		if(dirname != NULL)
 			writefile_in_dir(path, size_data, arr_data);
@@ -915,13 +944,11 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
 	}
 	
 	if(buffer) free(buffer);
-	if(arr_data) free(arr_data);
 	if(ret != 0) errno = ret;
 	return ret;
 	
 	atf_clean:
 	if(buffer) free(buffer);
-	if(arr_data) free(arr_data);
 	return -1;
 }
 
@@ -1167,7 +1194,7 @@ int lockFile(const char* pathname)
       
      		//LEN PATHNAME
 		//comunica: invia lunghezza pathname
-		int len = strlen(pathname);
+		size_t len = strlen(pathname);
 		*buffer = len;
 		ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
      		//riceve: conferma ricezione pathname
@@ -1239,7 +1266,7 @@ int unlockFile(const char* pathname)
       
       //LEN PATHNAME
 	//comunica: lunghezza pathname
-	int len = strlen(pathname);
+	size_t len = strlen(pathname);
 	*buffer = len;
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
       //riceve: conferma ricezione pathname
@@ -1372,7 +1399,7 @@ int closeFile(const char* pathname)
       
       //LEN PATHNAME
 	//comunica: lunghezza pathname
-	int len = strlen(pathname);
+	size_t len = strlen(pathname);
 	*buffer = len;
 	ec_meno1_c(write(fd_sk, buffer, sizeof(int)), "write in closeFile", cf_clean);
       //riceve: conferma ricezione lunghezza pathname
