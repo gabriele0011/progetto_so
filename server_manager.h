@@ -18,12 +18,8 @@ static size_t max_storage_file = 0;
 
 //(!) rivedere -> posizionare nei file corretti
 //mutex server_manager/server_worker
-pthread_mutex_t g_mtx = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
-//mutex coda concorrente richieste
-pthread_mutex_t mtx1 = PTHREAD_MUTEX_INITIALIZER;
-//mutex cache
-pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+
+
 
 
 file* cache = NULL; 
@@ -38,6 +34,8 @@ volatile sig_atomic_t sig_intquit = 0;	//SIGINT/SIGQUIT: uscita immediata - non 
 volatile sig_atomic_t sig_hup = 0; 		//SIG_HUP: non si accettano nuove connessioni - si termina una volta concluse quelle attive
 
 //prototipi
+int read_config_file(char* f_name);
+void* thread_func(void *arg);
 static int worker_openFile(int fd_c);
 static int worker_writeFile(int fd_c);
 static int worker_appendToFile(int fd_c);

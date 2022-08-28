@@ -9,6 +9,7 @@ typedef unsigned char byte;
 typedef enum { O_CREATE = 1, O_LOCK = 2 }flags;
 #define LOCK_TIMER 300
 
+
 //variabili globali
 static char* arg_D = NULL;		//dirname in cui scrivere i file rimossi dal server
 static char* arg_d = NULL;		//dirname in cui scrivere i file letti dal server

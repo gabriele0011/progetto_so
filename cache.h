@@ -9,7 +9,6 @@ static size_t used_mem;
 static size_t files_in_cache;
 
 //mutex cache
-pthread_mutex_t mtx;
 
 //struct elemento cache
 typedef struct _file
@@ -26,20 +25,21 @@ typedef struct _file
 	struct _file* next;		//ptr nodo successivo
 }file;
 
+
 //prototipi 
 void create_cache(int mem_size, int max_file_in_cache);
 void cache_dealloc(file** cache);
 
 void cache_capacity_update(int dim_file, int new_file_or_not);
-file* cache_research(file* cache, char* f_name);
-int cache_removeFile(file** cache, char* f_name, int id);
+file* cache_research(file* cache, const char* f_name);
+int cache_removeFile(file** cache, const char* f_name, int id);
 void print_queue(file* cache);
 
-int cache_insert(file** cache, char* f_name, char* f_data, size_t dim_f, int id, file** file_expelled);
-int cache_enqueue(file** cache, char* f_name, char* f_data, size_t dim_f, int id);
-file* replace_to_write(file** cache, char* f_name, char* f_data, size_t dim_f, int id);
-file* replace_to_append(file** cache, char* f_name, char* f_data, size_t dim_f, int id);
-int cache_appendToFile(file** cache, char* f_name, char* f_data, size_t dim_f, int id, file** file_expelled);
+int cache_insert(file** cache, const char* f_name, char* f_data, size_t dim_f, int id, file** file_expelled);
+int cache_enqueue(file** cache, const char* f_name, char* f_data, size_t dim_f, int id);
+file* replace_to_write(file** cache, const char* f_name, char* f_data, size_t dim_f, int id);
+file* replace_to_append(file** cache, const char* f_name, char* f_data, size_t dim_f, int id);
+int cache_appendToFile(file** cache, const char* f_name, char* f_data, size_t dim_f, int id, file** file_expelled);
 
-int cache_lockFile(file* cache, char* f_name, int id);
-int cache_unlockFile(file* cache, char* f_name, int id);
+int cache_lockFile(file* cache, const char* f_name, int id);
+int cache_unlockFile(file* cache, const char* f_name, int id);

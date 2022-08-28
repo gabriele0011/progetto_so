@@ -1,7 +1,9 @@
 #include "header_file.h"
 #include "error_ctrl.h"
 
-pthread_mutex_t mtx1;
+//mutex coda concorrente richieste
+
+
 typedef struct node {
 	int data;
 	struct node* next;
