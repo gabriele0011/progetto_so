@@ -7,6 +7,8 @@
 
 #include "server_manager.h"
 
+pthread_mutex_t g_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 
 int read_config_file(char* f_name)
 {
@@ -58,7 +60,7 @@ int read_config_file(char* f_name)
 		n++;
 	}
 	if (fclose(fd) != 0){ LOG_ERR(errno, "read_config_file: fclose fallita"); return -1; }
-	fprintf(stderr, "lettura config.txt avvenuta con successo\n"); //DEBUG
+	printf("lettura config.txt avvenuta con successo\n"); //DEBUG
 	return 0;
 }
 
@@ -421,7 +423,7 @@ static int worker_openFile(int fd_c)
 	int* buf;
    	ec_null_c( (buf = (int*)malloc(sizeof(int))), "malloc in openFile", of_clean);
 	*buf = 0;
-	int len;
+	size_t len;
 
 	//SETTING RICHIESTA
     	//comunica: richiesta openFile (cod.1) accettata
@@ -442,9 +444,10 @@ static int worker_openFile(int fd_c)
 	//PATHNAME
 	//allocazione mem pathname
 	ec_null_c((pathname = (char*)calloc(sizeof(char), len)), "calloc in openFile", of_clean);
+	memset((void*)pathname, '\0', (sizeof(char)*len));
 	//riceve: pathname
 	ec_meno1_c(read(fd_c, pathname, sizeof(char)*(len)), "read in openFile", of_clean);
-	pathname[len] = '\0';
+	//pathname[len] = '\0';
 	//comunica: pathname ricevuto
 	*buf = 0;
 	ec_meno1_c(write(fd_c, buf, sizeof(int)), "write in openFile", of_clean);
@@ -470,7 +473,7 @@ static int worker_openFile(int fd_c)
 
 	//dati ricevuti 
 
-	printf("(SERVER) - openFile:		INIZIO - f_name:%s | len_p=%zu| id=%d | flag:", pathname, strlen(pathname), id); //DEBUG
+	printf("(SERVER) - openFile:		INIZIO - path:%s | len_path=%zu |  id=%d | flag:", pathname, len, id); //DEBUG
 	if (flag==(O_CREATE|O_LOCK)) printf("O_CREATE|O_LOCK\n"); //DEBUG
 	if (flag==O_LOCK) printf("O_LOCK\n"); //DEBUG
 	if (flag == 0) printf("/\n"); //DEBUG
@@ -502,7 +505,7 @@ static int worker_openFile(int fd_c)
 	//CASO APERTURA IN LOCK  (questo caso non si verifica mai)
 	if (flag==O_LOCK){
 		if (file_exist){ 
-			if(cache_lockFile(cache, f->f_name, id) == -1){
+			if (cache_lockFile(cache, f->f_name, id) == -1){
 				goto of_clean;
 			}
 			//aggiorna lista dei processi che hanno aperto il file
@@ -518,8 +521,8 @@ static int worker_openFile(int fd_c)
 	}
 	
 	//CASO APERTURA SENZA FLAGS
-	if(flag==0){
-		if(file_exist){ 
+	if (flag==0){
+		if (file_exist){ 
 			//f->f_open = 1;
 			char char_id[101];
 			itoa(id, char_id);
@@ -532,12 +535,12 @@ static int worker_openFile(int fd_c)
 	
 	//INVIO ESITO OPENFILE
 	//comunica: esito openFile
-	if(ret == -2) ret = errno;
+	if (ret == -2) ret = errno;
 	*buf = ret;
 	ec_meno1_c(write(fd_c, buf, sizeof(int)), "write in openFile", of_clean);
 	//riceve: conferma ricezione
 	ec_meno1_c(read(fd_c, buf, sizeof(int)), "read in openFile", of_clean);
-	if(*buf != 0 ){ goto of_clean; }
+	if (*buf != 0 ){ goto of_clean; }
 	
 	printf("(SERVER) - openFile:		ESITO = %d\n", ret); //DEBUG
 	//INVIO FILE EVENTUALMENTE ESPULSO (1) o NULLA (0)
@@ -554,24 +557,24 @@ static int worker_openFile(int fd_c)
 		*buf =  len_path;
 		ec_meno1_c(write(fd_c, buf, sizeof(int)), "write in openFile", of_clean);
 		//PATHANAME
-		ec_meno1_c(write(fd_c, file_expelled->f_name,  len_path*sizeof(char)), "write in openFile", of_clean);
+		ec_meno1_c(write(fd_c, file_expelled->f_name,  sizeof(char)*len_path), "write in openFile", of_clean);
 		//SIZE DATA
 		ec_meno1_c(write(fd_c, &(file_expelled->f_size), sizeof(int)), "write in openFile XXX", of_clean);
 		//DATA
 		ec_meno1_c(write(fd_c, file_expelled->f_data, sizeof(char)*(file_expelled->f_size)), "write in openFile", of_clean);
 		
 		//rimozione del nodo rimpiazzato dalla cache
-		printf("(SERVER) - openFile:		file espulso (apth:%s -len_path=%zu- size=%zu) inviato\n", file_expelled->f_name, len_path, file_expelled->f_size); //DEBUG
-		if(file_expelled != NULL) free(file_expelled);
+		printf("(SERVER) - openFile:		file espulso (path:%s - len_path=%zu- size=%zu) inviato\n", file_expelled->f_name, len_path, file_expelled->f_size); //DEBUG
+		if (file_expelled != NULL) free(file_expelled);
 	}
 
-	if(buf) free(buf);
-	if(pathname) free(pathname);
+	if (buf) free(buf);
+	if (pathname) free(pathname);
 	return ret;
 	
 	of_clean:
-	if(buf) free(buf);
-	if(pathname) free(pathname);
+	if (buf) free(buf);
+	if (pathname) free(pathname);
 	return -1;
 }
 
@@ -581,7 +584,7 @@ static int worker_writeFile(int fd_c)
 	char* pathname = NULL;
 	char* data = NULL;
 	int* buf;
-   	ec_null_c( (buf = (int*)malloc(sizeof(int))), "malloc in writeFile", wf_clean);
+   	ec_null_c((buf = (int*)malloc(sizeof(int))), "malloc in writeFile", wf_clean);
 	*buf = 0;
 	int ret = 0;
 	file* file_expelled = NULL;
@@ -607,7 +610,8 @@ static int worker_writeFile(int fd_c)
 	//PATHNAME
 	//allocazione mem pathname
 	ec_null_c((pathname = calloc(sizeof(char), len)), "calloc in writeFile", wf_clean);
-	pathname[len] = '\0';
+	memset((void*)pathname, '\0', (sizeof(char)*len));
+	//pathname[len] = '\0';
 	//riceve: pathname
 	ec_meno1_c(read(fd_c, pathname, sizeof(char)*(len)), "read in writeFile", wf_clean);
 	//comunica: ricevuto
@@ -642,7 +646,7 @@ static int worker_writeFile(int fd_c)
 	ec_meno1_c(write(fd_c, buf, sizeof(int)), "write in writeFile", wf_clean);
 
 	//dati ricevuti
-	printf("(SERVER) - writeFile:		su file_name:%s | file_size=%zu | id=%d \n", pathname, file_size, id); //DEBUG
+	printf("(SERVER) - writeFile:		su path:%s | len_path=%zu | file_size=%zu | id=%d \n", pathname, len, file_size, id); //DEBUG
 
 
 	////////////////////////////
@@ -651,16 +655,22 @@ static int worker_writeFile(int fd_c)
 
 	//printf("ret=%d - path:%s - size:%d - id:%d\n", ret, pathname, file_size, id); //DEBUG
 
+	size_t exist = 1;
+	if(cache_research(cache, pathname) == NULL){
+		ret = -1;
+		exist = 0;
+	}
+
 	//se la scrittura fallisce, va eliminato il file vuoto creato nella openFile
-	if(cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled) == -1){
+	if(exist && cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled) == -1){
 		if(cache_removeFile(&cache, pathname, id) == -1){
-			LOG_ERR(-1, "writeFile: scrittura fallita e conseguente rimozione file vuoto fallita");
+			LOG_ERR(errno, "writeFile: scrittura fallita e conseguente rimozione file vuoto fallita");
 			goto wf_clean;
 		}
 	}else{
 		//unlock del file (precedentemente lockato per essere scritto)
-		if (cache_unlockFile(cache, pathname, id) == -1){
-			LOG_ERR(-1, "writeFile: cache_unlock fallita");
+		if ( exist && cache_unlockFile(cache, pathname, id) == -1){
+			LOG_ERR(errno, "writeFile: cache_unlock fallita");
 			goto wf_clean;
 		}
 	}
@@ -745,7 +755,8 @@ static int worker_appendToFile(int fd_c)
 	//PATHNAME
 	//allocazione mem pathname
 	ec_null_c((pathname = calloc(sizeof(char), len)), "appendToFile: calloc fallita", atf_clean);
-	pathname[len] = '\0';
+	memset((void*)pathname, '\0', (sizeof(char)*len));
+	//pathname[len] = '\0';
 	//riceve: pathname
 	ec_meno1_c(read(fd_c, pathname, sizeof(char)*(len)), "appendToFile: read fallita", atf_clean); 
 	//comunica: ricevuto
@@ -782,7 +793,8 @@ static int worker_appendToFile(int fd_c)
 
 
 	//dati ricevuti
-	printf("(SERVER) - appendToFile:	INIZIO - file_name:%s - file_size=%zu\n", pathname, file_size); //DEBUG
+	printf("(SERVER) - appendToFile:	su path:%s | len_path=%zu | file_size=%zu | id=%d \n", pathname, len, file_size, id); //DEBUG
+
 
 
 	//ELABORAZIONE
@@ -815,7 +827,6 @@ static int worker_appendToFile(int fd_c)
 		//PATHANAME
 		ec_meno1_c(write(fd_c, file_expelled->f_name, len_path*sizeof(char)), "appendToFile: write fallita", atf_clean);
 		//SIZE DATA
-		printf("BUG HERE ?? SIZE DATA = %zu\n", file_expelled->f_size);
 		ec_meno1_c(write(fd_c, &(file_expelled->f_size), sizeof(int)), "appendToFile: write fallita", atf_clean); 
 		//DATA
 		ec_meno1_c(write(fd_c, file_expelled->f_data, sizeof(char)*(file_expelled->f_size)), "openFile: write fallita", atf_clean);

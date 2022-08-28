@@ -1,5 +1,8 @@
 #include "conc_queue.h"
 
+
+pthread_mutex_t mtx1 = PTHREAD_MUTEX_INITIALIZER;
+
 int enqueue(t_queue** queue, int data)
 {
 	//creazione nuovo nodo + setting
