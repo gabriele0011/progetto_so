@@ -12,26 +12,20 @@
 typedef enum {O_CREATE=1, O_LOCK=2} flags;
 
 //var. settate mediante file config.txt
-static size_t t_workers_num = 0;
-static size_t server_mem_size = 0;
-static size_t max_storage_file = 0;
+static size_t t_workers_num;
+static size_t server_mem_size;
+static size_t max_storage_file;
 
 //(!) rivedere -> posizionare nei file corretti
 //mutex server_manager/server_worker
 
 
-
-
-file* cache = NULL; 
+file* cache = NULL;
 char* socket_name = NULL;
 t_queue* conc_queue = NULL;
-int fd_pipe_read = 0;
-int fd_pipe_write = 0;
-size_t tot_requests = 0;
-
-//flags segnali di teminazione
-volatile sig_atomic_t sig_intquit = 0;	//SIGINT/SIGQUIT: uscita immediata - non si accettano richieste - chiudere connessioni attive
-volatile sig_atomic_t sig_hup = 0; 		//SIG_HUP: non si accettano nuove connessioni - si termina una volta concluse quelle attive
+int fd_pipe_read;
+int fd_pipe_write;
+size_t tot_requests;
 
 //prototipi
 int read_config_file(char* f_name);

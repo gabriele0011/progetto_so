@@ -3,6 +3,7 @@
 #include "aux_function.h"
 #include "list.h"
 typedef unsigned char byte;
+
 static size_t cache_capacity;
 static size_t max_storage_file;
 static size_t used_mem;
