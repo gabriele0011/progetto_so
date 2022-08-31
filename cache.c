@@ -671,13 +671,9 @@ int cache_lockFile(file* cache, const char* f_name, int id)
 int cache_unlockFile(file* cache, const char* f_name, int id)
 {	
 	file* node;
-	//printf("(CACHE) - cache_unlockFile: cerco %s / %zu\n", f_name, strlen(f_name)); //DEBUG
-	//printf("(CACHE) - cache_unlockFile: lista -> "); //DEBUG
-	//print_queue(cache); //DEBUG
 	if ((node = cache_research(cache, f_name)) == NULL){
 		//LOG_ERR(errno, "cache_unlockFile:")
 		printf("cache_unlockFile:	file da unlockare non presente in cache\n"); //DEBUG
-		
 		return -1;
 	}
 	mutex_lock(&(node->mtx), "cache_unlockFile: lock fallita");
@@ -696,12 +692,12 @@ int cache_unlockFile(file* cache, const char* f_name, int id)
 
 void print_queue(file* cache)
 {
+	size_t i = 0;
 	file* temp = cache;
-	//printf("(STAMPA CACHE):			");
-	size_t i = 1;
+	printf("(STAMPA CACHE):			");
 	while(temp != NULL){
 		size_t L = strlen(temp->f_name);
-		printf("%zu) %s (%zuch/%zub)\n", i, temp->f_name, L, temp->f_size);
+		printf("%zu) %s (%zuch/%zub) - ", i, temp->f_name, L, temp->f_size);
 		i++;
 		temp = temp->next;
 	}
