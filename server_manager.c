@@ -414,7 +414,7 @@ int main(int argc, char* argv[])
 
 //////////////////////////////////////  SERVER_WORKER  //////////////////////////////////////
 
-//OPEN FILE 1
+//OPEN FILE 1 ok
 static int worker_openFile(int fd_c)
 {
 	char* pathname = NULL;
@@ -424,7 +424,7 @@ static int worker_openFile(int fd_c)
 	size_t len;
 
 	//SETTING RICHIESTA
-    	//comunica: richiesta openFile (cod.1) accettata
+    //comunica: richiesta openFile (cod.1) accettata
 	*buf = 0;
 	ec_meno1_c(write(fd_c, buf, sizeof(int)), "write in openFile", of_clean);
 
@@ -519,7 +519,8 @@ static int worker_openFile(int fd_c)
 		if (file_exist){ 
 			char char_id[101];
 			itoa(id, char_id);
-			insert_node(&(f->id_list), char_id);
+			if (search_node(f->id_list, char_id) != NULL) //il file è gia stato aperto?
+				insert_node(&(f->id_list), char_id);
 		}else{
 			errno = EINVAL;
 			ret = -2;
@@ -571,7 +572,7 @@ static int worker_openFile(int fd_c)
 	return -1;
 }
 
-//WRITE FILE 2
+//WRITE FILE 2 ok
 static int worker_writeFile(int fd_c)
 {
 	char* pathname = NULL;
@@ -644,16 +645,12 @@ static int worker_writeFile(int fd_c)
 	//printf("ret=%d - path:%s - size:%d - id:%d\n", ret, pathname, file_size, id); //DEBUG
 	//se la scrittura fallisce, va eliminato il file vuoto creato nella openFile
 
-	if(cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled) == -1){
-		if(cache_removeFile(&cache, pathname, id) == -1){
-			LOG_ERR(errno, "writeFile: scrittura fallita e conseguente rimozione file vuoto fallita");
-			goto wf_clean;
-		}
+	if(cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled) == 0){
+		if (cache_unlockFile(cache, pathname, id) != 0)
+			ret = -1;
 	}else{
-		//unlock del file (precedentemente lockato per essere scritto)
-		if (cache_unlockFile(cache, pathname, id) == -1){
-			LOG_ERR(errno, "writeFile: cache_unlock fallita");
-			goto wf_clean;
+		if(cache_removeFile(&cache, pathname, id) != 0){
+			ret = -1;
 		}
 	}
 
@@ -704,7 +701,7 @@ static int worker_writeFile(int fd_c)
 	return -1;
 }
 
-//APPEND TO FILE 3
+//APPEND TO FILE 3 ok
 static int worker_appendToFile(int fd_c)
 {
 	int* buffer;
@@ -774,7 +771,9 @@ static int worker_appendToFile(int fd_c)
 	// ELABORAZIONE RICHIESTA //
 	///////////////////////////
 
-	ret = cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled);
+	if (cache_appendToFile(&cache, pathname, data, file_size, id, &file_expelled) != 0){
+		ret = -1;
+	}
 	
 	//INVIO ESITO APPEND TO FILE
 	//comunica: esito
@@ -822,7 +821,7 @@ static int worker_appendToFile(int fd_c)
 	return -1;
 }
 
-//READ FILE 4 
+//READ FILE 4 ok
 static int worker_readFile(int fd_c)
 {
 	char* pathname = NULL;
@@ -934,69 +933,64 @@ static int worker_readNFiles(int fd_c)
 	int* buffer;
    	ec_null_c( (buffer = (int*)malloc(sizeof(int))), "readNFiles: malloc fallita", rnf_clean);
 	*buffer = 0;
-
-	//1 -> la prima read viene effettuata nella thread_func
+	//int ret; (!)
 
 	//SETTING RICHIESTA
-    	// (comunica): richiesta readNFiles (cod.5) accettata
+    //comunica: richiesta readNFiles (cod.5) accettata
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 
-
-	// comunicazione stabilita OK
+	// comunicazione stabilita
 	// acquisizione dati richiesta dal client:
-
 	
 	//IDENTIFICAZIONE PROCESSO CLIENT
-	//17 (riceve): pid
+	//riceve: pid
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 	int id = *buffer;
-	//18 (comunica): recevuto
+	//comunica: conferma recezione pid
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 
 	
 	//NUMERO DI FILE DA LEGGERE
-	// (riceve): 
+	//riceve: numero di file da leggere
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
 	int N = *buffer;
-	//6 risponde: conferma ricezione
+	//comunica: conferma ricezione
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 
-	int file_letti = 0;
+	//FASE 1 -> LOCK DI N FILE (nel caso ottimo)
+	int count = N;
+	int file_locked = 0;
 	file* temp = cache;
-	N++; //incremento per fermarmi a N!=1 nel while
+	if(count == 0) count = -1; //leggi tutti i file del server
+	while (temp != NULL && count != 0){
+		if (cache_lockFile(cache, temp->f_name, id) == 0) file_locked++;
+		//else se succede qualche errore in cache? errno? ret = errno;
+		temp = temp->next;
+		count--;
+	}
 
-	while(1){
+	//file_locked rappresenta il numero di file che verranno letti
+	//qui è necessario
+	//1. scandisce la lista
+	//2. cerca file lockato prima
+	//3. invia file al client
+	temp = cache;
+	int file_letti = 0;
+
+	while(temp != NULL && file_locked > 0){
 		//CONDIZIONE DI TERMINAZIONE
-		if(temp != NULL && N != 1){
-			//invio di un file
+		if(temp->f_lock == id){ //se si tratta di uno dei file lockati prima
+			//comunica: un file da inviare ora (stato di invio 1)
 			*buffer = 1;
 			ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
-		}else{
-			//termina
-			*buffer = 0;
-			ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
-			break;
-		}
-		ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
-		if (*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
+			//riceve: conferma
+			ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean); //inserisci controllo esito read
+			if (*buffer != 0){ goto rnf_clean; }
 
-
-		
-		//CONTROLLO LOCK FILE
-		int not_lock = 0;
-		if(temp->f_lock == 0 || temp->f_lock == id) not_lock = 1;
-		// comunica: al client l'esito del controllo
-		*buffer = not_lock;
-		ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
-		//riceve: conferma ricezione flag
-		ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
-		if (*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
-		
-		if(not_lock){
-			
+			//invio del file
 			//LEN FILE NAME
 			int len_name = strlen(temp->f_name);
 			*buffer = len_name;
@@ -1004,14 +998,14 @@ static int worker_readNFiles(int fd_c)
 			ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);	
 			//riceve: conferma
 			ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean); //inserisci controllo esito read
-			if (*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
+			if (*buffer != 0){ goto rnf_clean; }
 
 			//FILE NAME
 			//comunica: 
 			ec_meno1_c(write(fd_c, temp->f_name, sizeof(char)*len_name), "readFile: write fallita", rnf_clean);
 			//riceve: conferma
 			ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean); //inserisci controllo esito read
-			if (*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
+			if (*buffer != 0){ goto rnf_clean; }
 
 			//FILE SIZE
 			//comunica: file size
@@ -1019,21 +1013,40 @@ static int worker_readNFiles(int fd_c)
 			ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
 			//riceve: conferma
 			ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean); //inserisci controllo esito read
-			if (*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
+			if (*buffer != 0){goto rnf_clean; }
 
 			//DATA FILE
 			//comunica: data
 			ec_meno1_c(write(fd_c, temp->f_data, sizeof(char)*(temp->f_size)), "readNFiles: write fallita", rnf_clean);	//BUG HERE
 			//riceve: conferma
 			ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
-			if (*buffer != 0){ LOG_ERR(-1, "readNFiles: read non valida"); goto rnf_clean; }
-			file_letti++;
-			printf("(SERVER) - readNFiles:	file_name:%s LETTO E INVIATO\n", temp->f_name); //DEBUG
+			if (*buffer != 0){ goto rnf_clean; }
+			printf("(SERVER) - readNFiles:	file_name:%s (len=%zu) letto e inviato\n", temp->f_name, strlen(temp->f_name)); //DEBUG
 
-		}	
+			file_locked--;
+			file_letti++;
+		}else{
+			//comunica: nessun file da inviare ora (stato di invio 2)
+			*buffer = 2;
+			ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
+			//riceve: conferma ricezione stato di invio
+			ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
+			if (*buffer != 0){ goto rnf_clean; }
+		}
+		//prossimo file
 		temp=temp->next;
 	}
-	printf("(SERVER) - writeFile: FILE LETTI = %d\n", file_letti); //DEBUG
+	//comunica: read terminata
+	*buffer = 3;
+	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "readNFiles: write fallita", rnf_clean);
+	//riceve: conferma ricezione stato di invio
+	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "readNFiles: read fallita", rnf_clean);
+	if (*buffer != 0){ goto rnf_clean; }
+
+	printf("(SERVER) - readNFiles: FILE LETTI = %d\n", file_letti); //DEBUG
+
+	//COMUNICA ESITO 
+	//NUMERO DI FILE LETTI O ERRNO O 0 (!)
 
 	if(buffer) free(buffer);
 	return 0;
@@ -1043,7 +1056,7 @@ static int worker_readNFiles(int fd_c)
 	return -1;
 }
 
-//LOCK FILE 6
+//LOCK FILE 6 
 static int worker_lockFile(int fd_c)
 {
 	char* pathname = NULL;
@@ -1056,7 +1069,7 @@ static int worker_lockFile(int fd_c)
 	//1 -> la prima read viene effettuata nella thread_func
 
 	//SETTING RICHIESTA
-    	//(comunica): richiesta lockFile (cod.6) accettata
+    //(comunica): richiesta lockFile (cod.6) accettata
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
 
@@ -1098,13 +1111,14 @@ static int worker_lockFile(int fd_c)
 
 	//controllo esistenza e apertura del file da lockare
 	file* f = NULL;
-	if( (f = cache_research(cache, pathname)) != NULL && f->f_open == 1)
+	if( (f = cache_research(cache, pathname)) != NULL)
 		ret = cache_lockFile(cache, pathname, id);
 	else ret = -1;
 
 
 	//ESITO
 	//(comunica): esito
+	if(ret != 0) ret = errno;
 	*buffer = ret;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "lockFile: write fallita", lf_clean);
 	//(riceve): conferma ricezione
@@ -1173,11 +1187,12 @@ static int worker_unlockFile(int fd_c)
 
 	//ESITO
 	//comunica: esito
+	if(ret != 0) ret = errno;
 	*buffer = ret;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "unlockFile: write fallita", uf_clean);
 	//riceve: conferma ricezione esito
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "unlockFile: read fallita", uf_clean);
-	if (*buffer != 0){ LOG_ERR(-1, "unlockFile: read non valida"); goto uf_clean; }
+	if (*buffer != 0){ goto uf_clean; }
 
 	if(buffer) free(buffer);
 	if(pathname) free(pathname);
@@ -1199,7 +1214,7 @@ static int worker_removeFile(int fd_c)
 	int ret = 0;
 
 	//SETTING RICHIESTA
-    	//(comunica): richiesta removeFile (cod.x) accettata
+    //comunica: richiesta accettata
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "write in removeFile", rf_clean);
 
@@ -1244,16 +1259,22 @@ static int worker_removeFile(int fd_c)
 			ret = -1;
 		}else
 			ret = cache_removeFile(&cache, pathname, id);
+	}else{
+		errno = EINVAL;
+		ret = -1;
 	}
-
+	
 	//ESITO
 	//(comunica): esito
-	if(ret = -1) ret = errno;
+	if(ret != 0) ret = errno;
 	*buffer = ret;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "removeFile: write fallita", rf_clean);
 	//(riceve): conferma ricezione
 	ec_meno1_c(read(fd_c, buffer, sizeof(int)), "removeFile: read fallita", rf_clean);
-	if (*buffer != 0){ LOG_ERR(-1, "removeFile: read non valida"); goto rf_clean; }
+	if (*buffer != 0){ goto rf_clean; }
+
+	printf("(SERVER) - removeFile  su %s / esito=%d\n", pathname, ret); //DEBUG
+
 
 	if(buffer) free(buffer);
 	if(pathname)free(pathname);
@@ -1272,10 +1293,10 @@ static int worker_closeFile(int fd_c)
 	int* buffer;
    	ec_null_c((buffer = (int*)malloc(sizeof(int))), "malloc in closeFile", cf_clean);
 	*buffer = 0;
-	int ret = -1;
+	int ret = 0;
 
 	//SETTING RICHIESTA
-    //(comunica): richiesta removeFile (cod.x) accettata
+    //(comunica): richiesta removeFile=9 accettata
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "write in closeFile", cf_clean);
 
@@ -1312,7 +1333,6 @@ static int worker_closeFile(int fd_c)
 	*buffer = 0;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "write in closeFile", cf_clean);
 
-
 	//possibilita di aggiornare la LISTA DEI FILE APERTI DA QUI (!) ->
 	//aggiornare la lista del file chiuso elminando l'id che sta chiudento il file
 	//dalla lista dei processi che hanno aperto il file
@@ -1322,23 +1342,24 @@ static int worker_closeFile(int fd_c)
 	//ELABORAZIONE RICHIESTA
 	file* f;
 	if((f = cache_research(cache, pathname)) == NULL){
-		ret = 0;
+		errno = EINVAL;
+		ret = -1;
 	}else{
 		char id_str[101];
 		itoa(id, id_str);
-		if(f->id_list)
 		remove_node(&(f->id_list), id_str);
 		if(f->id_list == NULL){
 			f->f_open = 0;
 			f->f_read = 0;
 			f->f_write = 0;
 		}
+		//unlock del file se lockato da processo che richiede la chiusura
+		cache_unlockFile(cache, pathname, id);
 	}
-	//unlock del file se lockato da processo che richiede la chiusura
-	cache_unlockFile(cache, pathname, id); //aggiungi controllo esito funzione
 	
 	//ESITO
 	//(comunica): esito
+	if(ret == -1) ret = errno;
 	*buffer = ret;
 	ec_meno1_c(write(fd_c, buffer, sizeof(int)), "closeFile: write fallita", cf_clean);
 	//(riceve): conferma ricezione
@@ -1346,11 +1367,9 @@ static int worker_closeFile(int fd_c)
 	if (*buffer != 0){ LOG_ERR(-1, "closeFile: read non valida"); goto cf_clean; } //controlla
 
 	if(buffer) free(buffer);
-	if(ret != 0 ) ret = errno;
 	return 0;
 
 	cf_clean:
 	if(buffer) free(buffer);
 	return -1;
-
 }

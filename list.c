@@ -4,7 +4,7 @@
 pthread_mutex_t mtx2 = PTHREAD_MUTEX_INITIALIZER;
 
 //inserimento di un elemento in testa alla lista
-void insert_node(node** list, char* string)
+void insert_node(node** list, const char* string)
 {
       mutex_lock(&mtx2, "lock fallita in ");
       //allocazione
@@ -54,7 +54,7 @@ void dealloc_list(node** list)
 }
 
 //ricerca di un nodo
-node* search_node(node* list, char* string)
+node* search_node(node* list, const char* string)
 {
       mutex_lock(&mtx2, "lock fallita in ");
       while (list != NULL){
@@ -69,7 +69,7 @@ node* search_node(node* list, char* string)
 }
 
 //rimozione di un nodo
-void remove_node(node** list, char* string)
+void remove_node(node** list, const char* string)
 {
       mutex_lock(&mtx2, "lock fallita in ");
       if (*list == NULL){
