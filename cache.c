@@ -14,7 +14,7 @@ void create_cache(int mem_size, int max_file_in_cache)
 }
 file* cache_research(file* cache, const char* f_name)
 {
-	//printf("(CACHE) - cache_research:	cerco %s\n", f_name); //DEBUG
+	printf("(CACHE) - cache_research:	cerco %s\n", f_name); //DEBUG
 	//print_queue(cache); //DEBUG
 	file* node = NULL;
 	//CODA VUOTA
@@ -40,7 +40,7 @@ file* cache_research(file* cache, const char* f_name)
 			return NULL;
 		}
 	}
-	
+	//print_queue(cache);
 	//CODA CON DUE O PIU ELEMENTI
 	file* prev = cache;
 	mutex_lock(&(cache->next->mtx), "lock in cache_appendToFile");
@@ -59,8 +59,7 @@ file* cache_research(file* cache, const char* f_name)
 		curr = curr->next;
 		mutex_lock(&(curr->mtx), "lock in cache_appendToFile");
 		mutex_unlock(&(aux->mtx), "unlock in cache_appendToFile");
-	}
-	
+	} 
 	//CONTROLLO PRIMI/ULTIMI DUE ELEMENTI
 	if(!found){
 		if (strcmp(prev->f_name, f_name) == 0){
@@ -76,11 +75,11 @@ file* cache_research(file* cache, const char* f_name)
 	mutex_unlock(&(curr->mtx), "unlock in cache_appendToFile");
 	//printf("CACHE - cache_research: fine ricerca %s\n", f_name); //DEBUG
 	if (!found){ 
-		//printf("(CACHE) - cache_research:	non trovato\n"); //DEBUG 
+		printf("(CACHE) - cache_research:	non trovato\n"); //DEBUG 
 		return NULL;
 	}else{
-		//size_t len_f_name = strlen(f_name);
-		//printf("(CACHE) - cache_research:	%s (%zu) trovato\n", f_name, len_f_name); //DEBUG
+		size_t len_f_name = strlen(f_name);
+		printf("(CACHE) - cache_research:	%s (%zu) trovato\n", f_name, len_f_name); //DEBUG
 		return node;
 	}
 }
@@ -94,6 +93,8 @@ void cache_capacity_update(int dim_file, int new_file_or_not)
 }
 void cache_dealloc(file** cache)
 {
+	printf("deallocazione cache in corso...\n");
+	
 	mutex_lock(&mtx, "cache_dealloc: lock fallita");
 	if(*cache == NULL){ 
 		*cache = NULL;
@@ -101,24 +102,36 @@ void cache_dealloc(file** cache)
 		printf("(CACHE) - cache_dealloc:	deallocazione cache avvenuta\n"); //DEBUG
 		return;
 	}
-	if((*cache)->next == NULL){
-		free(*cache);
+	if((*cache) == NULL){
+		file* temp = *cache;
+		print_list(temp->id_list);
+		dealloc_list(&(temp->id_list));
+		free(temp->f_name);
+		free(temp->f_data);
+		pthread_mutex_destroy(&(temp->mtx));	
+		free(temp);
 		*cache = NULL;
 		mutex_unlock(&mtx, "cache_dealloc: lock fallita");
 		printf("(CACHE) - cache_dealloc:	deallocazione cache avvenuta\n"); //DEBUG
 		return;
 	}
-
 	file* curr = *cache;
-	file* prev;
-	while (curr->next != NULL){
-		prev = curr;
+	//print_list((*cache)->id_list);
+
+	while (curr != NULL){
+		file* temp = curr;
 		curr = curr->next;
-		free(prev);
+		dealloc_list(&(temp->id_list));
+		free(temp->f_name);
+		free(temp->f_data);
+		pthread_mutex_destroy(&(temp->mtx));
+		temp->next = NULL;
+		free(temp);
 	}
 	*cache = NULL;
 	mutex_unlock(&mtx, "cache_dealloc: unlock fallita");
 	printf("(CACHE) - cache_dealloc:	deallocazione cache avvenuta\n"); //DEBUG
+	print_queue(*cache);
 	return;
 }
 int cache_removeFile(file** cache, const char* f_name, int id)
@@ -135,10 +148,12 @@ int cache_removeFile(file** cache, const char* f_name, int id)
 	if ((*cache)->next == NULL){
 		if (strcmp((*cache)->f_name, f_name) == 0 && ((*cache)->f_lock != 0 || (*cache)->f_lock == id) ){
 			size_t size = (*cache)->f_size;
-			printf("REMOVE FILE DEBUG TESTA %zu\n", size);
 			file* temp = *cache;
-			*cache = NULL;
+			free(temp->f_name);
+			free(temp->f_data);
+			dealloc_list(&(temp->id_list));
 			free(temp);
+			*cache = NULL; //(!)
 			mutex_unlock(&mtx, "cache_removeFile: unlock fallita");
 			cache_capacity_update(-size, -1);
 			printf("(CACHE) - cache_removeFile:		avvnuta su f_name: %s / id=%d\n", f_name, id); //DEBUG
@@ -158,11 +173,11 @@ int cache_removeFile(file** cache, const char* f_name, int id)
 	file* prev = (*cache);
 	mutex_lock(&((*cache)->next->mtx), "cache_removeFile: unlock fallita");
 	file* curr = (*cache)->next;
-
 	file* aux;
+
 	int found = 0;
 	while (curr->next != NULL){
-		if (strcmp(prev->f_name, f_name) == 0 && (prev->f_lock != 0  || prev->f_lock == id)){
+		if (strcmp(prev->f_name, f_name) == 0 && prev->f_lock == id){
 			found = 1;
 			break;
 		}
@@ -173,26 +188,35 @@ int cache_removeFile(file** cache, const char* f_name, int id)
 		mutex_unlock(&(aux->mtx), "cache_removeFile: unlock fallita in cache_enqueue");
 	}
 	//se il nodo da rimuovere è prev (puo essere il primo e in mezzo alla lista)
-	if (strcmp(prev->f_name, f_name) == 0 && (prev->f_lock != 0 || prev->f_lock == id) ){
+	if (strcmp(prev->f_name, f_name) == 0 && prev->f_lock == id){
 		//se si tratta del primo nodo della coda
 		if (prev == *cache) *cache = prev->next;
 		//altrimenti collego aux a curr (prev è in mezzo)
 		else aux->next = prev->next;
 		//aggiornamento capacità cache
 		cache_capacity_update(-(prev->f_size), -1);
-		pthread_mutex_destroy(&prev->mtx);
+		dealloc_list(&(prev->id_list));
+		free(prev->f_name);
+		free(prev->f_data);
+		mutex_unlock(&(prev->mtx), "cache_removeFile: unlock fallita in cache_enqueue"); //(!)
+		pthread_mutex_destroy(&(prev->mtx));
 		free(prev);
-		found = 1;
+		mutex_unlock(&(curr->mtx), "cache_removeFile: unlock fallita in cache_enqueue");
+		return 0;
 	}else{
 		//se si tratta dell'ultimo elemento della lista
-		if (strcmp(curr->f_name, f_name) == 0 && (curr->f_lock != 0 || curr->f_lock == id)){
-				prev->next = curr->next; //curr->next = NULL
-				pthread_mutex_destroy(&curr->mtx);
+		if (strcmp(curr->f_name, f_name) == 0  && curr->f_lock == id){
+				prev->next = NULL; //curr->next = NULL
 				size_t size = curr->f_size;
+				dealloc_list(&(curr->id_list));
+				free(curr->f_name);
+			    free(curr->f_data);
+				mutex_unlock(&(curr->mtx), "cache_removeFile: unlock fallita in cache_enqueue");
+				pthread_mutex_destroy(&(curr->mtx));
 				free(curr);
-				//aggiornamento capacità cache
 				cache_capacity_update(-size, -1);
-				found = 1;
+				mutex_unlock(&(prev->mtx), "cache_removeFile: unlock fallita in cache_enqueue"); //(!)
+				return 0;
 		}
 	}
 	mutex_unlock(&(prev->mtx), "cache_removeFile: unlock fallita in cache_enqueue");
@@ -253,8 +277,17 @@ int cache_enqueue(file** cache,  const char* f_name, char* f_data, const size_t 
 		free(new);
 		return -1;
 	}
+	//lock del file
 	new->next = NULL;
+	new->f_data = NULL;
+	new->id_list = NULL;
+	new->f_lock = id;
 	new->f_size = dim_f;
+	new->f_open = 1;
+	//open
+	char char_id[101];
+	itoa(id, char_id);
+	insert_node(&(new->id_list), char_id);
 	
 	//len pathname + pathname
 	size_t len_f_name = strlen(f_name);
@@ -262,18 +295,6 @@ int cache_enqueue(file** cache,  const char* f_name, char* f_data, const size_t 
 	memset((void*)new->f_name, '\0', (sizeof(char)*len_f_name));
 	strncpy(new->f_name, f_name, len_f_name);
 
-	//permessi di scrittura/lettura
-	new->f_read = 1;
-	new->f_write = 1;
-    //lock del file
-	new->f_lock = id;
-	//aggiunge/aggiorna lista dei processi che hanno aperto il file
-	new->id_list = NULL;
-	char char_id[101];
-	itoa(id, char_id);
-	insert_node(&(new->id_list), char_id);
-	new->f_open = 1;
-	//print_list(new->id_list); //DEBUG
 
 	//COLLOCAZIONE NODO
 	mutex_lock(&mtx, "cache: lock fallita");
@@ -329,45 +350,42 @@ file* replace_to_write(file** cache,  const char* f_name, char* f_data, const si
 	}
     //setting
 	new->next = NULL;     
-	new->f_size = dim_f;
-	//apertura del file
 	new->id_list = NULL;
+	new->f_data = NULL;
+	new->f_size = dim_f;
+	new->f_lock = id;
+	new->f_open = 1;
+	//apertura del file
 	char char_id[101];
 	itoa(id, char_id);
 	insert_node(&(new->id_list), char_id);
-	new->f_open = 1;
-	//altri parametri
-	new->f_read = 1; 	//utile?
-    new->f_write = 1; 	//utile?
-	//lock del file
-	new->f_lock = id;
 
     size_t len_f_name = strlen(f_name);
-	//printf("+++ DEBUG -> F_NAME: %s / LEN_F_NAME = %zu ++\n", f_name, len_f_name);
 	ec_null_r((new->f_name = (char*)calloc(sizeof(char), len_f_name)), "calloc in replace_to_write", NULL);
 	memset((void*)new->f_name, '\0', (sizeof(char)*len_f_name));
 	strncpy(new->f_name, f_name, len_f_name);
-	//size_t L = strlen(new->f_name);
-	//printf("+++ DEBUG -> NEW->F_NAME = %s / LEN_F_NAME = %zu ++\n", new->f_name, L);
-	//(new->f_name)[len_f_name] = '\0';
+
 
 	file* rep = NULL;
 	int found = 0;
 
 	//RICERCA DEL NODO DA RIMPIAZZARE
+	
 	//CASO 1 - un elemento in coda
 	mutex_lock(&((*cache)->mtx), "lock in replace_to_write");
 	if ((*cache)->next == NULL){
 		if( (*cache)->f_lock == 0 || (*cache)->f_lock == id ){
 			rep = *cache;
-                  *cache = new;
+            *cache = new;
 			found = 1;
 			//printf("(CACHE) - replace_to_write:	rimpiazzo il file: %s\n", (*cache)->f_name); //DEBUG
 			mutex_unlock(&((*cache)->mtx), "unlock in replace_to_write");
-		}else{	//l'unico elem. non rispetta le cond. di rimpiazzo
-			mutex_unlock(&((*cache)->mtx), "unlock in replace_to_write");
+		}else{	//rimpiazzo impossibile
 			pthread_mutex_destroy(&new->mtx);
+			dealloc_list(&(new->id_list));
+			free(new->f_name);
 			free(new);
+			mutex_unlock(&((*cache)->mtx), "unlock in replace_to_write");
 			return NULL;
 		}
 	}else{
@@ -391,7 +409,7 @@ file* replace_to_write(file** cache,  const char* f_name, char* f_data, const si
 			mutex_unlock(&(aux->mtx), "unlock in replace_to_write");
 		}
 		//controllo degli ultimi o primi due elementi
-		if (prev->f_lock == 0 || prev->f_lock == id ){
+		if (!found && (prev->f_lock == 0 || prev->f_lock == id) ){
 			if (aux == prev){      //prev primo elemento lista
 				*cache = prev->next;
 			}else{                  //prev sta tra aux e curr
@@ -408,7 +426,7 @@ file* replace_to_write(file** cache,  const char* f_name, char* f_data, const si
 			prev->next = curr->next;
 			found = 1;
 		}
-		print_queue(*cache);	//DEBUG
+		//print_queue(*cache);	//DEBUG
 
 		//printf("FILE DA RIMPIAZZARE = %s\n", rep->f_name);
 		mutex_unlock(&(prev->mtx), "unlock in replace_to_write");
@@ -417,8 +435,11 @@ file* replace_to_write(file** cache,  const char* f_name, char* f_data, const si
 	if (!found){
 		if (pthread_mutex_destroy(&new->mtx) == -1)
 			LOG_ERR(errno, "mutex destroy in replace_to_write");
-			free(new);
-			return NULL;
+		dealloc_list(&(new->id_list));
+		free(new->f_name);
+		dealloc_list(&(new->id_list));
+		free(new);
+		return NULL;
 	}
 	//COLLOCAZIONE NODO IN CODA
 	mutex_lock(&((*cache)->mtx) , "lock in replace_to_write");
@@ -471,9 +492,9 @@ int cache_appendToFile(file** cache, const char* f_name, char* f_data, const siz
 	//CODA CON UN ELEMENTO
 	mutex_lock(&((*cache)->mtx), "lock in cache_appendToFile");
 	if ((*cache)->next == NULL && strcmp((*cache)->f_name, f_name) == 0){
-		mutex_unlock(&((*cache)->mtx), "lock in cache_appendToFile");
 		found = 1;
 		node = *cache;
+		mutex_unlock(&((*cache)->mtx), "lock in cache_appendToFile");
 	}else{
 		//CODA CON DUE O PIU ELEMENTI
 		file* prev = *cache;
@@ -507,9 +528,11 @@ int cache_appendToFile(file** cache, const char* f_name, char* f_data, const siz
 		//printf("DEBUG cache_appendToFile: setting del nuovo nodo\n");
 		mutex_lock(&(node->mtx), "cache_appendToFile: lock fallita");
 		size_t new_size = dim_f + node->f_size;
-		printf("APPENDtoFILE ++++ new_size=%zu, dimf=%zu, node->f_size=%zu\n", new_size, dim_f, node->f_size);
-		if(node->f_size == 0){ ec_null_r( (node->f_data = (char*)calloc(sizeof(char), new_size)), "cache_appendToFile: calloc fallita", -1); }
-		else{ ec_null_r( (node->f_data = (char*)realloc(node->f_data, new_size)), "cache_appendToFile: calloc fallita", -1); }
+		if (node->f_size == 0){ 
+			ec_null_r( (node->f_data = (char*)calloc(sizeof(char), new_size)), "cache_appendToFile: calloc fallita", -1); 
+		}else{ 
+			ec_null_r( (node->f_data = (char*)realloc(node->f_data, new_size)), "cache_appendToFile: calloc fallita", -1); 
+		}
 		int j = 0; int i = node->f_size;
 		while (j < dim_f && i < new_size){
 			node->f_data[i] = f_data[j];
@@ -521,13 +544,10 @@ int cache_appendToFile(file** cache, const char* f_name, char* f_data, const siz
 		cache_capacity_update(dim_f, 0);
 		printf("(CACHE) - cache_appendToFile:	scrittura %s avvenuta\n", f_name); //DEBUG
 		print_queue(*cache);  //DEBUG
+		return 0;
 	}
-
-	if (found) return 0;
-	else{
-		errno = EPERM;
-		return -1;
-	}
+	errno = EPERM;
+	return -1;
 }
 file* replace_to_append(file** cache, const char* f_name, char* f_data, size_t dim_f, int id)
 {
@@ -624,8 +644,10 @@ file* replace_to_append(file** cache, const char* f_name, char* f_data, size_t d
 	if ((used_mem+dim_f) <= cache_capacity){
 		mutex_lock(&(node->mtx), "replace_to_append: lock fallita");
 		size_t new_size = dim_f + node->f_size;
-		if(node->f_size == 0){ ec_null_r( (node->f_data = (char*)calloc(sizeof(char), new_size) ), "replace_to_append: calloc fallita", NULL); }
-		else{ ec_null_r( (node->f_data = (char*)realloc(node->f_data, new_size)), "replace_to_append: calloc fallita", NULL); }
+		if(node->f_size == 0){ 
+			ec_null_r( (node->f_data = (char*)calloc(sizeof(char), new_size) ), "replace_to_append: calloc fallita", NULL); }
+		else{ 
+			ec_null_r( (node->f_data = (char*)realloc(node->f_data, new_size)), "replace_to_append: calloc fallita", NULL); }
 		int j = 0; int i = node->f_size;
 		while (j < dim_f && i < new_size){
 			node->f_data[i] = f_data[j];
@@ -652,14 +674,13 @@ int cache_lockFile(file* cache, const char* f_name, int id)
 		errno = EINVAL;
 		return -1;
 	}
-
+	mutex_lock(&(node->mtx), "cache_lockFile: lock fallita");
 	//file lockato da un altro processo
 	if(node->f_lock != 0 && node->f_lock != id){
 		errno = EPERM;
 		mutex_unlock(&(node->mtx), "cache_lockFile: unlock fallita");
 		return -1;
 	}
-	mutex_lock(&(node->mtx), "cache_lockFile: lock fallita");
 	
 	//file non lockato o gia lockato dallo stesso processo
 	if(node->f_lock == 0 || node->f_lock == id ){
@@ -696,13 +717,19 @@ int cache_unlockFile(file* cache, const char* f_name, int id)
 
 void print_queue(file* cache)
 {
+	if(cache == NULL ) return;
 	file* temp = cache;
 	printf("(STAMPA CACHE):			");
 	while(temp != NULL){
-		size_t L = strlen(temp->f_name);
-		printf("%s (%zuch/%zub) - ", temp->f_name, L, temp->f_size);
+		//size_t L = strlen(temp->f_name);
+		//printf("%s (%zuch/%zub) - ", temp->f_name, L, temp->f_size);
+		printf("%s ", temp->f_name);
+		printf("(");
+		print_list(temp->id_list);
+		printf(")\n");
 		temp = temp->next;
 	}
 	printf("\n");
 	return;
 }
+
