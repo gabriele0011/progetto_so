@@ -11,6 +11,6 @@ typedef struct node {
 }t_queue;
 
 int enqueue(t_queue** queue, int data);
-int dequeue(t_queue** queue);
+int* dequeue(t_queue** queue);
 void printf_queue(t_queue* queue);
 void dealloc_queue(t_queue** queue);

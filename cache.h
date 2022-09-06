@@ -17,8 +17,6 @@ typedef struct _file
 	char* f_name;			//nome del file
 	size_t f_size;			//dim file
 	char* f_data;			//array di byte di lung. f_size
-	byte f_read;			//flag lettura
-	byte f_write;			//flag scrittura
 	int f_lock;				//flag lock
 	byte f_open;			//file aperto
 	pthread_mutex_t mtx;		//mutex
@@ -36,9 +34,9 @@ file* cache_research(file* cache, const char* f_name);
 int cache_removeFile(file** cache, const char* f_name, int id);
 void print_queue(file* cache);
 
-int cache_insert(file** cache, const char* f_name, char* f_data, size_t dim_f, int id, file** file_expelled);
-int cache_enqueue(file** cache, const char* f_name, char* f_data, size_t dim_f, int id);
-file* replace_to_write(file** cache, const char* f_name, char* f_data, size_t dim_f, int id);
+int cache_insert(file** cache, const char* f_name, char* f_data, const size_t dim_f, int id, file** file_expelled);
+int cache_enqueue(file** cache, const char* f_name, char* f_data, const size_t dim_f, int id);
+file* replace_to_write(file** cache, const char* f_name, char* f_data, const size_t dim_f, int id);
 file* replace_to_append(file** cache, const char* f_name, char* f_data, size_t dim_f, int id);
 int cache_appendToFile(file** cache, const char* f_name, char* f_data, size_t dim_f, int id, file** file_expelled);
 

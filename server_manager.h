@@ -5,8 +5,6 @@
 #include "cache.h"
 //#include "list.h"
 
-
-
 #define UNIX_PATH_MAX 108
 #define PIPE_MAX_LEN_MSG sizeof(int)
 typedef enum {O_CREATE=1, O_LOCK=2} flags;
@@ -16,16 +14,6 @@ static size_t t_workers_num;
 static size_t server_mem_size;
 static size_t max_storage_file;
 
-//(!) rivedere -> posizionare nei file corretti
-//mutex server_manager/server_worker
-
-
-file* cache = NULL;
-char* socket_name = NULL;
-t_queue* conc_queue = NULL;
-int fd_pipe_read;
-int fd_pipe_write;
-size_t tot_requests;
 
 //prototipi
 int read_config_file(char* f_name);
